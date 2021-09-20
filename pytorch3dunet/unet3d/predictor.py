@@ -4,11 +4,15 @@ import h5py
 import numpy as np
 import torch
 from skimage import measure
+import nibabel as nib
 
 from pytorch3dunet.datasets.hdf5 import AbstractHDF5Dataset
 from pytorch3dunet.datasets.utils import SliceBuilder
 from pytorch3dunet.unet3d.utils import get_logger
 from pytorch3dunet.unet3d.utils import remove_halo
+from pytorch3dunet.unet3d.metrics import get_evaluation_metric
+import pandas as pa
+
 
 logger = get_logger('UNetPredictor')
 
@@ -82,7 +86,7 @@ class StandardPredictor(_AbstractPredictor):
         super().__init__(model, output_dir, config, **kwargs)
 
     def __call__(self, test_loader):
-        assert isinstance(test_loader.dataset, AbstractHDF5Dataset)
+        # assert isinstance(test_loader.dataset, AbstractHDF5Dataset)
 
         logger.info(f"Processing '{test_loader.dataset.file_path}'...")
         output_file = _get_output_file(dataset=test_loader.dataset, output_dir=self.output_dir)
@@ -211,6 +215,122 @@ class StandardPredictor(_AbstractPredictor):
         assert np.all(
             patch_overlap - patch_halo >= 0), f"Not enough patch overlap for stride: {stride} and halo: {patch_halo}"
 
+
+class NiiPredictor(_AbstractPredictor):
+    """
+    Applies the model on the given dataset and saves the result as H5 file.
+    Predictions from the network are kept in memory. If the results from the network don't fit in into RAM
+    use `LazyPredictor` instead.
+
+    The output dataset names inside the H5 is given by `dest_dataset_name` config argument. If the argument is
+    not present in the config 'predictions{n}' is used as a default dataset name, where `n` denotes the number
+    of the output head from the network.
+
+    Args:
+        model (Unet3D): trained 3D UNet model used for prediction
+        output_dir (str): path to the output directory (optional)
+        config (dict): global config dict
+    """
+
+    def __init__(self, model, output_dir, config, **kwargs):
+        super().__init__(model, output_dir, config, **kwargs)
+        self.device = self.config['device']
+        self.eval_criterion = get_evaluation_metric(self.config)
+
+    def get_patches(self,input,target,box,i):
+        input_cropped = input[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
+        target_cropped = target[:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
+        # target_cropped =  (target_cropped == i).long().to(self.device)
+        return input_cropped,target_cropped
+
+    def stitch_patches(self,outputs,bnoutputs,boxes,shape):
+        
+        b,c,w,h,d = shape
+        output = torch.zeros(b,15,w,h,d)
+        output = output.to(self.device)
+        for i,box in enumerate(boxes):
+            fs = outputs[i]*bnoutputs[i]
+            
+            # fs = fs.to(self.device)
+            c = output[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]<fs
+            d = torch.where(c)
+            output[:,:,box[0]+d[2],box[2]+d[3],box[4]+d[4]]=fs[c]
+
+        output = torch.argmax(output,1)
+        return output
+
+    def __call__(self, test_loader):
+        # assert isinstance(test_loader.dataset, AbstractHDF5Dataset)
+
+        logger.info(f"Processing '{test_loader.dataset.file_path}'...")
+        # output_file = _get_output_file(dataset=test_loader.dataset, output_dir=self.output_dir)
+
+        out_channels = self.config['model'].get('out_channels')
+
+        prediction_channel = self.config.get('prediction_channel', None)
+        if prediction_channel is not None:
+            logger.info(f"Saving only channel '{prediction_channel}' from the network output")
+
+        device = self.device
+        output_heads = self.config['model'].get('output_heads', 1)
+
+        logger.info(f'Running prediction on {len(test_loader)} batches...')
+
+        
+
+
+        # Sets the module in evaluation mode explicitly (necessary for batchnorm/dropout layers if present)
+        self.model.eval()
+        # Set the `testing=true` flag otherwise the final Softmax/Sigmoid won't be applied!
+        self.model.testing = True
+        # Run predictions on the entire input dataset
+        with torch.no_grad():
+            eval_scores = []
+            for batch,target,boxes, subject in test_loader:
+                # send batch to device
+                batch = batch.to(device)
+                predictions=[]
+                bnoutputs=[]
+                # eval_score=[]
+                for i in range(15):
+                    input_cropped,target_cropped = self.get_patches(batch,target,boxes[i],i)
+                    
+                    prediction = self.model(input_cropped)
+                    predictions.append(prediction)
+                    bnoutputs.append(prediction[:,i,...] > 0.5)
+                    # eval_score.append(self.eval_criterion(bnoutputs[i], target_cropped))
+
+                
+                prediction = self.stitch_patches(predictions,bnoutputs,boxes,batch.shape)
+                eval_score = self.eval_criterion(prediction,target)
+                eval_scores.append(eval_score)
+                output_file=self._save_results(predictions,subject)
+                # save results
+                logger.info(f'Saving predictions to: {output_file}')
+
+    def _evaluate_save_results(self,eval_scores):
+        if os.path.isdir(self.config['model_path']):
+            outfile = self.config['model_path'] +'summary.csv'
+        else:
+            outfile = 'summary.csv'
+        dct={}        
+        avg =  torch.mean(eval_scores,axis=0).tolist()
+        avg.extend([torch.mean(eval_scores[:,3:]),torch.mean(eval_scores[:,1:])])
+        std = torch.std(eval_scores,axis=0).tolist()
+        std.extend([torch.std(eval_scores[:,3:]),torch.std(eval_scores[:,1:])])
+        dct['dice_mean'] = avg
+        dct['dice_std'] = std
+        df = pa.DataFrame(dct)
+        df.to_csv(outfile)
+
+
+    def _save_results(self,predictions,subject):
+        
+
+        outfile = self.output_dir+subject[0]+'.nii.gz'
+        img = nib.Nifti1Image(predictions,np.eye(4))
+        nib.save(img,outfile)
+        return outfile
 
 class LazyPredictor(StandardPredictor):
     """

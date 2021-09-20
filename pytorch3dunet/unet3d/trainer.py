@@ -162,7 +162,7 @@ class UNet3DTrainer:
         self.validate_iters = validate_iters
         self.eval_score_higher_is_better = eval_score_higher_is_better
 
-        logger.info(model)
+        # logger.info(model)
         logger.info(f'eval_score_higher_is_better: {eval_score_higher_is_better}')
 
         if best_eval_score is not None:
@@ -269,9 +269,8 @@ class UNet3DTrainer:
                         f'Epoch [{self.num_epoch}/{self.max_num_epochs - 1}]')
 
             input, target, weight = self._split_training_batch(t)
-
             output, loss = self._forward_pass(input, target, weight)
-
+            
             train_losses.update(loss.item(), self._batch_size(input))
 
             # compute gradients and update parameters
@@ -304,7 +303,8 @@ class UNet3DTrainer:
                 # if model contains final_activation layer for normalizing logits apply it, otherwise both
                 # the evaluation metric as well as images in tensorboard will be incorrectly computed
                 if hasattr(self.model, 'final_activation') and self.model.final_activation is not None:
-                    output = self.model.final_activation(output)
+                    
+                    output = torch.argmax(self.model.final_activation(output),1)
 
                 # compute eval criterion
                 if not self.skip_train_validation:
@@ -363,7 +363,7 @@ class UNet3DTrainer:
                 # if model contains final_activation layer for normalizing logits apply it, otherwise
                 # the evaluation metric will be incorrectly computed
                 if hasattr(self.model, 'final_activation') and self.model.final_activation is not None:
-                    output = self.model.final_activation(output)
+                    output = torch.argmax(self.model.final_activation(output),1)
 
                 if i % 100 == 0:
                     self._log_images(input, target, output, 'val_')
@@ -400,7 +400,7 @@ class UNet3DTrainer:
     def _forward_pass(self, input, target, weight=None):
         # forward pass
         output = self.model(input)
-
+        
         # compute the loss
         if weight is None:
             loss = self.loss_criterion(output, target)

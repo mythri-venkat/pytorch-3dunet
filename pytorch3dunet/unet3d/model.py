@@ -2,7 +2,7 @@ import importlib
 
 import torch.nn as nn
 
-from pytorch3dunet.unet3d.buildingblocks import DoubleConv, ExtResNetBlock, create_encoders, \
+from pytorch3dunet.unet3d.buildingblocks import DoubleConv, ExtResNetBlock, DenseBlock, ResAttentionBlock, DenseAttentionBlock, create_encoders, \
     create_decoders
 from pytorch3dunet.unet3d.utils import number_of_features_per_level
 
@@ -46,7 +46,7 @@ class Abstract3DUNet(nn.Module):
         super(Abstract3DUNet, self).__init__()
 
         self.testing = testing
-
+        
         if isinstance(f_maps, int):
             f_maps = number_of_features_per_level(f_maps, num_levels=num_levels)
 
@@ -149,6 +149,71 @@ class ResidualUNet3D(Abstract3DUNet):
                                              conv_padding=conv_padding,
                                              **kwargs)
 
+class ResAttentionUNet3D(Abstract3DUNet):
+    """
+    Residual 3DUnet model implementation based on https://arxiv.org/pdf/1706.00120.pdf.
+    Uses ExtResNetBlock as a basic building block, summation joining instead
+    of concatenation joining and transposed convolutions for upsampling (watch out for block artifacts).
+    Since the model effectively becomes a residual net, in theory it allows for deeper UNet.
+    """
+
+    def __init__(self, in_channels, out_channels, final_sigmoid=True, f_maps=64, layer_order='gcr',
+                 num_groups=8, num_levels=5, is_segmentation=True, conv_padding=1, **kwargs):
+        super(ResAttentionUNet3D, self).__init__(in_channels=in_channels,
+                                             out_channels=out_channels,
+                                             final_sigmoid=final_sigmoid,
+                                             basic_module=ResAttentionBlock,
+                                             f_maps=f_maps,
+                                             layer_order=layer_order,
+                                             num_groups=num_groups,
+                                             num_levels=num_levels,
+                                             is_segmentation=is_segmentation,
+                                             conv_padding=conv_padding,
+                                             **kwargs)
+
+class DenseUNet3D(Abstract3DUNet):
+    """
+    Residual 3DUnet model implementation based on https://arxiv.org/pdf/1706.00120.pdf.
+    Uses ExtResNetBlock as a basic building block, summation joining instead
+    of concatenation joining and transposed convolutions for upsampling (watch out for block artifacts).
+    Since the model effectively becomes a residual net, in theory it allows for deeper UNet.
+    """
+
+    def __init__(self, in_channels, out_channels, final_sigmoid=True, f_maps=64, layer_order='gcr',
+                 num_groups=8, num_levels=5, is_segmentation=True, conv_padding=1, **kwargs):
+        super(DenseUNet3D, self).__init__(in_channels=in_channels,
+                                             out_channels=out_channels,
+                                             final_sigmoid=final_sigmoid,
+                                             basic_module=DenseBlock,
+                                             f_maps=f_maps,
+                                             layer_order=layer_order,
+                                             num_groups=num_groups,
+                                             num_levels=num_levels,
+                                             is_segmentation=is_segmentation,
+                                             conv_padding=conv_padding,
+                                             **kwargs)
+
+class DenseAttentionUNet3D(Abstract3DUNet):
+    """
+    Residual 3DUnet model implementation based on https://arxiv.org/pdf/1706.00120.pdf.
+    Uses ExtResNetBlock as a basic building block, summation joining instead
+    of concatenation joining and transposed convolutions for upsampling (watch out for block artifacts).
+    Since the model effectively becomes a residual net, in theory it allows for deeper UNet.
+    """
+
+    def __init__(self, in_channels, out_channels, final_sigmoid=True, f_maps=64, layer_order='gcr',
+                 num_groups=8, num_levels=5, is_segmentation=True, conv_padding=1, **kwargs):
+        super(DenseAttentionUNet3D, self).__init__(in_channels=in_channels,
+                                             out_channels=out_channels,
+                                             final_sigmoid=final_sigmoid,
+                                             basic_module=DenseAttentionBlock,
+                                             f_maps=f_maps,
+                                             layer_order=layer_order,
+                                             num_groups=num_groups,
+                                             num_levels=num_levels,
+                                             is_segmentation=is_segmentation,
+                                             conv_padding=conv_padding,
+                                             **kwargs)
 
 class UNet2D(Abstract3DUNet):
     """

@@ -55,8 +55,8 @@ class SliceBuilder:
         patch_shape = tuple(patch_shape)
         stride_shape = tuple(stride_shape)
         skip_shape_check = kwargs.get('skip_shape_check', False)
-        if not skip_shape_check:
-            self._check_patch_shape(patch_shape)
+        # if not skip_shape_check:
+        #     self._check_patch_shape(patch_shape)
 
         self._raw_slices = self._build_slices(raw_datasets[0], patch_shape, stride_shape)
         if label_datasets is None:
@@ -281,8 +281,8 @@ def get_train_loaders(config):
         logger.warn(f"Cannot find dataset class in the config. Using default '{dataset_cls_str}'.")
     dataset_class = _loader_classes(dataset_cls_str)
 
-    assert set(loaders_config['train']['file_paths']).isdisjoint(loaders_config['val']['file_paths']), \
-        "Train and validation 'file_paths' overlap. One cannot use validation data for training!"
+    # assert set(loaders_config['train']['file_paths']).isdisjoint(loaders_config['val']['file_paths']), \
+    #     "Train and validation 'file_paths' overlap. One cannot use validation data for training!"
 
     train_datasets = dataset_class.create_datasets(loaders_config, phase='train')
 
@@ -324,30 +324,30 @@ def get_test_loaders(config):
         dataset_cls_str = 'StandardHDF5Dataset'
         logger.warn(f"Cannot find dataset class in the config. Using default '{dataset_cls_str}'.")
     dataset_class = _loader_classes(dataset_cls_str)
-
+    
     test_datasets = dataset_class.create_datasets(loaders_config, phase='test')
 
     num_workers = loaders_config.get('num_workers', 1)
     logger.info(f'Number of workers for the dataloader: {num_workers}')
 
     batch_size = loaders_config.get('batch_size', 1)
-    if torch.cuda.device_count() > 1 and not config['device'].type == 'cpu':
-        logger.info(
-            f'{torch.cuda.device_count()} GPUs available. Using batch_size = {torch.cuda.device_count()} * {batch_size}')
-        batch_size = batch_size * torch.cuda.device_count()
+    # if torch.cuda.device_count() > 1 and not config['device'].type == 'cpu':
+    #     logger.info(
+    #         f'{torch.cuda.device_count()} GPUs available. Using batch_size = {torch.cuda.device_count()} * {batch_size}')
+    #     batch_size = batch_size * torch.cuda.device_count()
 
     logger.info(f'Batch size for dataloader: {batch_size}')
 
     # use generator in order to create data loaders lazily one by one
     for test_dataset in test_datasets:
+        
         logger.info(f'Loading test set from: {test_dataset.file_path}...')
         if hasattr(test_dataset, 'prediction_collate'):
             collate_fn = test_dataset.prediction_collate
         else:
             collate_fn = default_prediction_collate
 
-        yield DataLoader(test_dataset, batch_size=batch_size, num_workers=num_workers,
-                         collate_fn=collate_fn)
+        yield DataLoader(test_dataset, batch_size=batch_size, num_workers=num_workers)
 
 
 def default_prediction_collate(batch):
