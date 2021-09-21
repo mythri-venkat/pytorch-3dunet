@@ -12,6 +12,7 @@ from pytorch3dunet.unet3d.utils import get_logger
 from pytorch3dunet.unet3d.utils import remove_halo
 from pytorch3dunet.unet3d.metrics import get_evaluation_metric
 import pandas as pa
+import torch.nn.functional as F
 
 
 logger = get_logger('UNetPredictor')
@@ -241,6 +242,14 @@ class NiiPredictor(_AbstractPredictor):
         input_cropped = input[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
         target_cropped = target[:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
         # target_cropped =  (target_cropped == i).long().to(self.device)
+        if (box[1]-box[0]) < 48:
+            binterp = True
+            input_cropped = F.interpolate(input_cropped,size=(48,48,48),mode='trilinear')
+            target_cropped = target_cropped.float().unsqueeze(1)/15
+            target_cropped = F.interpolate(target_cropped,size=(48,48,48),mode='nearest').squeeze(1)
+            target_cropped = (target_cropped*15).long()
+        # target_cropped[target_cropped != i] =0 
+        return input_cropped,target_cropped,binterp
         return input_cropped,target_cropped
 
     def stitch_patches(self,outputs,bnoutputs,boxes,shape):
@@ -256,6 +265,30 @@ class NiiPredictor(_AbstractPredictor):
             d = torch.where(c)
             output[:,:,box[0]+d[2],box[2]+d[3],box[4]+d[4]]=fs[c]
 
+        output = torch.argmax(output,1)
+        return output
+
+    def stitch_patches1(self,outputs,bnoutputs,boxes,shape,binterps):
+        
+        b,w,h,d = shape
+        output = torch.zeros(b,15,w,h,d)
+        output = output.to(self.device)
+        counter = torch.zeros(b,15,w,h,d)
+
+        counter = counter.to(self.device)
+        for i,box in enumerate(boxes):
+            fs = outputs[i]
+            # if (box[1]-box[0]) < 48:
+            if binterps[i]:
+                fs = F.interpolate(fs,size=(int(box[1]-box[0]),int(box[3]-box[2]),int(box[5]-box[4])),mode='trilinear')
+            output[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]+=fs
+            counter[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]+=1
+
+            # # fs = fs.to(self.device)
+            # c = output[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]<fs
+            # d = torch.where(c)
+            # output[:,:,box[0]+d[2],box[2]+d[3],box[4]+d[4]]=fs[c]
+        output =output/counter
         output = torch.argmax(output,1)
         return output
 
@@ -289,46 +322,56 @@ class NiiPredictor(_AbstractPredictor):
             for batch,target,boxes, subject in test_loader:
                 # send batch to device
                 batch = batch.to(device)
+                target = target.to(device)
                 predictions=[]
                 bnoutputs=[]
+                binterps=[]
                 # eval_score=[]
                 for i in range(15):
-                    input_cropped,target_cropped = self.get_patches(batch,target,boxes[i],i)
-                    
+                    input_cropped,target_cropped,binterp = self.get_patches(batch,target,boxes[i],i)
+                    binterps.append(binterp)
                     prediction = self.model(input_cropped)
-                    predictions.append(prediction)
-                    bnoutputs.append(prediction[:,i,...] > 0.5)
+                    predictions.append(torch.argmax(prediction,1))
+                    # bnoutputs.append(prediction[:,i,...] > 0.5)
                     # eval_score.append(self.eval_criterion(bnoutputs[i], target_cropped))
 
                 
-                prediction = self.stitch_patches(predictions,bnoutputs,boxes,batch.shape)
+                prediction = self.stitch_patches1(predictions,bnoutputs,boxes,batch.shape,binterps)
+                
                 eval_score = self.eval_criterion(prediction,target)
-                eval_scores.append(eval_score)
-                output_file=self._save_results(predictions,subject)
+                eval_scores.append(eval_score.cpu().numpy())
+                output_file=self._save_results(prediction,subject)
+                
                 # save results
                 logger.info(f'Saving predictions to: {output_file}')
+            avg12,avg14=self._evaluate_save_results(eval_scores)
+            logger.info(f'Results: {avg12},{avg14}')
 
     def _evaluate_save_results(self,eval_scores):
-        if os.path.isdir(self.config['model_path']):
+        
+        eval_scores = np.array(eval_scores)
+        
+        if os.path.isdir(os.path.dirname(self.config['model_path'])):
             outfile = self.config['model_path'] +'summary.csv'
         else:
             outfile = 'summary.csv'
         dct={}        
-        avg =  torch.mean(eval_scores,axis=0).tolist()
-        avg.extend([torch.mean(eval_scores[:,3:]),torch.mean(eval_scores[:,1:])])
-        std = torch.std(eval_scores,axis=0).tolist()
-        std.extend([torch.std(eval_scores[:,3:]),torch.std(eval_scores[:,1:])])
+        avg =  np.mean(eval_scores,0).tolist()
+        avg.extend([np.mean(eval_scores[:,3:]),np.mean(eval_scores[:,1:])])
+        std = np.std(eval_scores,0).tolist()
+        std.extend([np.std(eval_scores[:,3:]),np.std(eval_scores[:,1:])])
         dct['dice_mean'] = avg
         dct['dice_std'] = std
         df = pa.DataFrame(dct)
         df.to_csv(outfile)
+        return avg[-2],avg[-1]
 
 
-    def _save_results(self,predictions,subject):
+    def _save_results(self,prediction,subject):
         
-
+        prediction = prediction.cpu().numpy()
         outfile = self.output_dir+subject[0]+'.nii.gz'
-        img = nib.Nifti1Image(predictions,np.eye(4))
+        img = nib.Nifti1Image(prediction,np.eye(4))
         nib.save(img,outfile)
         return outfile
 

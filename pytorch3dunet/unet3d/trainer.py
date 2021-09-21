@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from tensorboardX import SummaryWriter
 from torch.optim.lr_scheduler import ReduceLROnPlateau
-
+import numpy as np
 from pytorch3dunet.datasets.utils import get_train_loaders
 from pytorch3dunet.unet3d.losses import get_loss_criterion
 from pytorch3dunet.unet3d.metrics import get_evaluation_metric
@@ -12,6 +12,7 @@ from pytorch3dunet.unet3d.model import get_model
 from pytorch3dunet.unet3d.utils import get_logger, get_tensorboard_formatter, create_sample_plotter, create_optimizer, \
     create_lr_scheduler, get_number_of_learnable_parameters
 from . import utils
+import torch.nn.functional as F
 
 logger = get_logger('UNet3DTrainer')
 
@@ -252,6 +253,60 @@ class UNet3DTrainer:
             self.num_epoch += 1
         logger.info(f"Reached maximum number of epochs: {self.max_num_epochs}. Finishing training...")
 
+    def get_patches(self,input,target,box,i):
+    
+        input_cropped = input[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
+        target_cropped = target[:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
+        binterp = False
+        if (box[1]-box[0]) < 48:
+            binterp = True
+            input_cropped = F.interpolate(input_cropped,size=(48,48,48),mode='trilinear')
+            target_cropped = target_cropped.float().unsqueeze(1)/15
+            target_cropped = F.interpolate(target_cropped,size=(48,48,48),mode='nearest').squeeze(1)
+            target_cropped = (target_cropped*15).long()
+        # target_cropped[target_cropped != i] =0 
+        return input_cropped,target_cropped,binterp
+
+    def stitch_patches(self,outputs,bnoutputs,boxes,shape):
+        
+        b,w,h,d = shape
+        output = torch.zeros(b,15,w,h,d)
+        output = output.to(self.device)
+        for i,box in enumerate(boxes):
+            fs = outputs[i]*bnoutputs[i]
+            
+            # fs = fs.to(self.device)
+            c = output[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]<fs
+            d = torch.where(c)
+            output[:,:,box[0]+d[2],box[2]+d[3],box[4]+d[4]]=fs[c]
+
+        output = torch.argmax(output,1)
+        return output
+
+    def stitch_patches1(self,outputs,bnoutputs,boxes,shape,binterps):
+        
+        b,w,h,d = shape
+        output = torch.zeros(b,15,w,h,d)
+        output = output.to(self.device)
+        counter = torch.zeros(b,15,w,h,d)
+
+        counter = counter.to(self.device)
+        for i,box in enumerate(boxes):
+            fs = outputs[i]
+            # if (box[1]-box[0]) < 48:
+            if binterps[i]:
+                fs = F.interpolate(fs,size=(int(box[1]-box[0]),int(box[3]-box[2]),int(box[5]-box[4])),mode='trilinear')
+            output[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]+=fs
+            counter[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]+=1
+
+            # # fs = fs.to(self.device)
+            # c = output[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]<fs
+            # d = torch.where(c)
+            # output[:,:,box[0]+d[2],box[2]+d[3],box[4]+d[4]]=fs[c]
+        output =output/counter
+        output = torch.argmax(output,1)
+        return output
+
     def train(self):
         """Trains the model for 1 epoch.
 
@@ -268,15 +323,24 @@ class UNet3DTrainer:
             logger.info(f'Training iteration [{self.num_iterations}/{self.max_num_iterations}]. '
                         f'Epoch [{self.num_epoch}/{self.max_num_epochs - 1}]')
 
-            input, target, weight = self._split_training_batch(t)
-            output, loss = self._forward_pass(input, target, weight)
+            input, target, boxes = self._split_training_batch(t)
             
-            train_losses.update(loss.item(), self._batch_size(input))
+            weight=None
+            outputs=[]
+            binterps = []
+            for i in range(15):
+                # i=np.random.randint(0,15)
+                input_cropped,target_cropped,binterp = self.get_patches(input,target,boxes[i],i)
+                binterps.append(binterp)
+                output, loss = self._forward_pass(input_cropped, target_cropped, weight)
+                
+                outputs.append(output)
+                train_losses.update(loss.item(), self._batch_size(input_cropped))
 
-            # compute gradients and update parameters
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
+                # compute gradients and update parameters
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
 
             if self.num_iterations % self.validate_after_iters == 0:
                 # set the model in eval mode
@@ -303,12 +367,24 @@ class UNet3DTrainer:
                 # if model contains final_activation layer for normalizing logits apply it, otherwise both
                 # the evaluation metric as well as images in tensorboard will be incorrectly computed
                 if hasattr(self.model, 'final_activation') and self.model.final_activation is not None:
+                    bnoutputs=[]
+                    for i,output in enumerate(outputs):
+                        outputs[i]=self.model.final_activation(output)
+                        # bnoutputs.append(
+                        #     torch.argmax(outputs[i],1))
+                    # print(boxes[0])
+                    # print(bnoutputs[0].shape,target[:,int(boxes[0][0]):int(boxes[0][1]),int(boxes[0][2]):int(boxes[0][3]),int(boxes[0][4]):int(boxes[0][5])].shape)
+                    # output=torch.argmax(self.model.final_activation(output),1)
                     
-                    output = torch.argmax(self.model.final_activation(output),1)
 
+
+
+                    
+                    output = self.stitch_patches1(outputs,bnoutputs,boxes,target.shape,binterps)
                 # compute eval criterion
                 if not self.skip_train_validation:
-                    eval_score = self.eval_criterion(output, target)
+                    # eval_score = torch.mean(torch.Tensor([self.eval_criterion(op, target[:,int(boxes[i][0]):int(boxes[i][1]),int(boxes[i][2]):int(boxes[i][3]),int(boxes[i][4]):int(boxes[i][5])]) for i,op in enumerate(bnoutputs)]))
+                    eval_score = torch.mean(self.eval_criterion(output,target)[1:])
                     train_eval_scores.update(eval_score.item(), self._batch_size(input))
 
                 # log stats, params and images
@@ -316,7 +392,7 @@ class UNet3DTrainer:
                     f'Training stats. Loss: {train_losses.avg}. Evaluation score: {train_eval_scores.avg}')
                 self._log_stats('train', train_losses.avg, train_eval_scores.avg)
                 self._log_params()
-                self._log_images(input, target, output, 'train_')
+                # self._log_images(input, target, output, 'train_')
 
             if self.should_stop():
                 return True
@@ -355,20 +431,30 @@ class UNet3DTrainer:
             for i, t in enumerate(self.loaders['val']):
                 logger.info(f'Validation iteration {i}')
 
-                input, target, weight = self._split_training_batch(t)
+                input, target, boxes = self._split_training_batch(t)
+                weight=None
+                outputs=[]
+                binterps = []
 
-                output, loss = self._forward_pass(input, target, weight)
-                val_losses.update(loss.item(), self._batch_size(input))
+                for i in range(15):
+                    input_cropped,target_cropped,binterp = self.get_patches(input,target,boxes[i],i)
+                    binterps.append(binterp)
+                    output, loss = self._forward_pass(input_cropped, target_cropped, weight)
+                    outputs.append(output)
+                    val_losses.update(loss.item(), self._batch_size(input_cropped))
 
                 # if model contains final_activation layer for normalizing logits apply it, otherwise
                 # the evaluation metric will be incorrectly computed
                 if hasattr(self.model, 'final_activation') and self.model.final_activation is not None:
-                    output = torch.argmax(self.model.final_activation(output),1)
+                    bnoutputs=[]
+                    for i,output in enumerate(outputs):
+                        outputs[i] = self.model.final_activation(output)
+                    output = self.stitch_patches1(outputs,bnoutputs,boxes,target.shape,binterps)
 
-                if i % 100 == 0:
-                    self._log_images(input, target, output, 'val_')
+                # if i % 100 == 0:
+                #     self._log_images(input, target, output, 'val_')
 
-                eval_score = self.eval_criterion(output, target)
+                eval_score = torch.mean(self.eval_criterion(output, target)[1:])
                 val_scores.update(eval_score.item(), self._batch_size(input))
 
                 if self.sample_plotter is not None:

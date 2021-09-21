@@ -26,8 +26,37 @@ class DiceCoefficient:
 
     def __call__(self, input, target):
         # Average across channels in order to get the final score
-        return torch.mean(compute_per_channel_dice(input, target, epsilon=self.epsilon))
+        return torch.mean(compute_per_channel_dice(input, target, epsilon=self.epsilon)[1:])
 
+class DiceCoefficientFull:
+    """Computes Dice Coefficient.
+    Generalized to multiple channels by computing per-channel Dice Score
+    (as described in https://arxiv.org/pdf/1707.03237.pdf) and theTn simply taking the average.
+    Input is expected to be probabilities instead of logits.
+    This metric is mostly useful when channels contain the same semantic class (e.g. affinities computed with different offsets).
+    DO NOT USE this metric when training with DiceLoss, otherwise the results will be biased towards the loss.
+    """
+
+    def __init__(self, epsilon=1e-6, **kwargs):
+        self.epsilon = epsilon
+
+    def __call__(self, input, target):
+        # Average across channels in order to get the final score
+        
+        target = target.unsqueeze(1)
+        input = input.unsqueeze(1)
+        b,_,h,w,d = target.shape
+        encoded_target = torch.empty(b,15,h,w,d)
+        torch.zeros_like(encoded_target)
+        encoded_target = encoded_target.to(target.device)
+        encoded_target.scatter_(1, target, 1)
+        encoded_input = torch.empty(b,15,h,w,d)
+        torch.zeros_like(encoded_input)
+        encoded_input = encoded_input.to(target.device)
+        encoded_input.scatter_(1, input, 1)
+        x=compute_per_channel_dice(encoded_input, encoded_target, epsilon=self.epsilon)
+        # x=torch.mean(x[1:])
+        return x
 
 class MeanIoU:
     """

@@ -163,7 +163,7 @@ class NiiDataset(ConfigDataset):
         self.images = self._load_images(self.paths,expand_dims=expand_dims)
         self.file_path = root_dir
         self.instance_ratio = instance_ratio
-
+        self.expand_dims=expand_dims
         min_value, max_value, mean, std = calculate_stats(self.images)
         logger.info(f'Input stats: min={min_value}, max={max_value}, mean={mean}, std={std}')
 
@@ -175,20 +175,20 @@ class NiiDataset(ConfigDataset):
         
         self.raws = [np.array(self.images[0].shape)]
         # print(self.raws,self.raws[0])
-        if phase != 'test':
+        # if phase != 'test':
             # load labeled images
             # masks_dir = os.path.join(root_dir, 'masks')
-            # assert os.path.isdir(masks_dir)
-            self.mask_paths = self._load_files(root_dir,phase, '_seg_ana_1mm_center_cropped.nii.gz')
-            self.masks = self._load_masks(self.mask_paths)
-
-            assert len(self.paths) == len(self.masks)
-            # load label images transformer
-            self.masks_transform = transformer.label_transform()
-        else:
-            self.masks = None
-            self.masks_transform = None
-            self.subjects = self._load_subjects(root_dir,phase)
+        # assert os.path.isdir(masks_dir)
+        self.mask_paths = self._load_files(root_dir,phase, '_seg_ana_1mm_center_cropped.nii.gz')
+        self.masks = self._load_masks(self.mask_paths)
+        self.boxes=[self.get_cropped_structure(mask) for mask in self.masks]
+        assert len(self.paths) == len(self.masks)
+        # load label images transformer
+        self.masks_transform = transformer.label_transform()
+    # else:
+        # self.masks = None
+        # self.masks_transform = None
+        self.subjects = self._load_subjects(root_dir,phase)
 
 
 
@@ -199,11 +199,16 @@ class NiiDataset(ConfigDataset):
         img =self.images[idx]
         if self.phase != 'test':
             mask = self.masks[idx]
-            icls = np.random.randint(0,15)
-            img,mask=self.get_cropped_structure(img,mask,icls)
-            return self.raw_transform(img), self.masks_transform(mask)
+            # icls = np.random.randint(0,15)
+            boxes=self.boxes[idx]
+            
+            if self.expand_dims:
+                img = np.expand_dims(img, axis=0)
+            return self.raw_transform(img), self.masks_transform(mask),boxes
         else:
-            return self.raw_transform(img), self.subjects[idx]
+            mask = self.masks[idx]
+            boxes=self.get_cropped_structure(mask)
+            return self.raw_transform(img), self.masks_transform(mask),boxes, self.subjects[idx]
 
     def bbox2_3D(self,img,icls=0):
 
@@ -236,26 +241,60 @@ class NiiDataset(ConfigDataset):
         return pwr
         
 
-    def get_cropped_structure(self,img,lbl,icls=15):
-
-        box = self.bbox2_3D(lbl,icls)
-        center = [(box[1] + box[0]) / 2, (box[3] + box[2]) / 2, (box[5] + box[4]) / 2]
+    def get_cropped_structure(self,lbl,ncls=15):
+        boxes=[]
+        for icls in range(ncls):
+            box = self.bbox2_3D(lbl,icls)
+            center = [int((box[1] + box[0]) / 2), int((box[3] + box[2]) / 2), int((box[5] + box[4]) / 2)]
+            
+            
+            b1=(box[1]-box[0])
+            b2=(box[3]-box[2])
+            b3=(box[5]-box[4])
+            bmax = max(b1,b2,b3)
+            if bmax<48:
+                box[0]=center[0]-int(math.floor(bmax/2))
+                box[1]=center[0]+int(math.floor(bmax/2))                
+                box[2]=center[1]-int(math.floor(bmax/2))
+                box[3]=center[1]+int(math.floor(bmax/2))
+                box[4]=center[2]-int(math.floor(bmax/2))                
+                box[5]=center[2]+int(math.floor(bmax/2))    
+            else:
+                b1=self.getpwr(b1)
+                b2=self.getpwr(b2)
+                b3=self.getpwr(b3)
+                                
+                box[0]=center[0]-int(math.floor(b1/2))
+                box[1]=center[0]+int(math.floor(b1/2))
+                if box[0]<0:
+                    box[0]=0
+                    box[1]+=1
+                if box[1]>128:
+                    box[1]=128
+                    box[0]-=1
+                box[2]=center[1]-int(math.floor(b2/2))
+                box[3]=center[1]+int(math.floor(b2/2))
+                if box[2]<0:
+                    box[2]=0
+                    box[3]+=1
+                if box[3]>128:
+                    box[3]=128
+                    box[2]-=1
+                box[4]=center[2]-int(math.floor(b3/2))
+                box[5]=center[2]+int(math.floor(b3/2))
+                if box[4]<0:
+                    box[4]=0
+                    box[5]+=1
+                if box[5]>128:
+                    box[5]=128
+                    box[4]-=1
+            
+            boxes.append(box)
+        # img_cropped = img[int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
+        # lbl_cropped = lbl[int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
         
-        b1=self.getpwr(box[1]-box[0])
-        b2=self.getpwr(box[3]-box[2])
-        b3=self.getpwr(box[5]-box[4])
-        box[0]=center[0]-int(math.floor(b1/2))
-        box[1]=center[0]+int(math.floor(b1/2))
-        box[2]=center[1]-int(math.floor(b2/2))
-        box[3]=center[1]+int(math.floor(b2/2))
-        box[4]=center[2]-int(math.floor(b3/2))
-        box[5]=center[2]+int(math.floor(b3/2))
-
-        img_cropped = img[int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
-        lbl_cropped = lbl[int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
-        img_cropped = np.expand_dims(img_cropped, axis=0)
         # lbl_cropped = np.expand_dims(lbl_cropped, axis=0)
-        return img_cropped,lbl_cropped
+        return boxes
 
     def __len__(self):
         return len(self.images)
