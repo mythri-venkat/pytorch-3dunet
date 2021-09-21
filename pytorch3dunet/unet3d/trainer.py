@@ -13,6 +13,7 @@ from pytorch3dunet.unet3d.utils import get_logger, get_tensorboard_formatter, cr
     create_lr_scheduler, get_number_of_learnable_parameters
 from . import utils
 import torch.nn.functional as F
+import random
 
 logger = get_logger('UNet3DTrainer')
 
@@ -328,6 +329,11 @@ class UNet3DTrainer:
             weight=None
             outputs=[]
             binterps = []
+            idxshuffle = list(range(15))
+
+            random.shuffle(idxshuffle)
+            boxes=[boxes[i] for i in idxshuffle]
+            
             for i in range(15):
                 # i=np.random.randint(0,15)
                 input_cropped,target_cropped,binterp = self.get_patches(input,target,boxes[i],i)
@@ -435,7 +441,10 @@ class UNet3DTrainer:
                 weight=None
                 outputs=[]
                 binterps = []
-
+                idxshuffle = list(range(15))
+                random.shuffle(idxshuffle)
+                boxes=[boxes[i] for i in idxshuffle]
+                
                 for i in range(15):
                     input_cropped,target_cropped,binterp = self.get_patches(input,target,boxes[i],i)
                     binterps.append(binterp)

@@ -242,6 +242,7 @@ class NiiPredictor(_AbstractPredictor):
         input_cropped = input[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
         target_cropped = target[:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
         # target_cropped =  (target_cropped == i).long().to(self.device)
+        binterp = False
         if (box[1]-box[0]) < 48:
             binterp = True
             input_cropped = F.interpolate(input_cropped,size=(48,48,48),mode='trilinear')
@@ -250,7 +251,7 @@ class NiiPredictor(_AbstractPredictor):
             target_cropped = (target_cropped*15).long()
         # target_cropped[target_cropped != i] =0 
         return input_cropped,target_cropped,binterp
-        return input_cropped,target_cropped
+        
 
     def stitch_patches(self,outputs,bnoutputs,boxes,shape):
         
@@ -270,7 +271,7 @@ class NiiPredictor(_AbstractPredictor):
 
     def stitch_patches1(self,outputs,bnoutputs,boxes,shape,binterps):
         
-        b,w,h,d = shape
+        b,c,w,h,d = shape
         output = torch.zeros(b,15,w,h,d)
         output = output.to(self.device)
         counter = torch.zeros(b,15,w,h,d)
@@ -331,7 +332,7 @@ class NiiPredictor(_AbstractPredictor):
                     input_cropped,target_cropped,binterp = self.get_patches(batch,target,boxes[i],i)
                     binterps.append(binterp)
                     prediction = self.model(input_cropped)
-                    predictions.append(torch.argmax(prediction,1))
+                    predictions.append(prediction)
                     # bnoutputs.append(prediction[:,i,...] > 0.5)
                     # eval_score.append(self.eval_criterion(bnoutputs[i], target_cropped))
 

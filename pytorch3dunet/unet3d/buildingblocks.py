@@ -65,8 +65,14 @@ def create_conv(in_channels, out_channels, kernel_size, order, num_groups, paddi
                 modules.append(('batchnorm', nn.BatchNorm3d(in_channels)))
             else:
                 modules.append(('batchnorm', nn.BatchNorm3d(out_channels)))
+        elif char == 'i':
+            is_before_conv = i < order.index('c')
+            if is_before_conv:
+                modules.append(('instancenorm', nn.InstanceNorm3d(in_channels)))
+            else:
+                modules.append(('instancenorm', nn.InstanceNorm3d(out_channels)))
         else:
-            raise ValueError(f"Unsupported layer type '{char}'. MUST be one of ['b', 'g', 'r', 'l', 'e', 'c']")
+            raise ValueError(f"Unsupported layer type '{char}'. MUST be one of ['b', 'g', 'r', 'l', 'e', 'c','i']")
 
     return modules
 
@@ -157,6 +163,9 @@ class ExtResNetBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, order='cge', num_groups=8, **kwargs):
         super(ExtResNetBlock, self).__init__()
 
+        self.bdropout = 'd'  in order
+        order=order.replace('d','')
+        
         # first convolution
         self.conv1 = SingleConv(in_channels, out_channels, kernel_size=kernel_size, order=order, num_groups=num_groups)
         # residual block
@@ -175,6 +184,9 @@ class ExtResNetBlock(nn.Module):
             self.non_linearity = nn.ELU(inplace=True)
         else:
             self.non_linearity = nn.ReLU(inplace=True)
+        if self.bdropout:
+            self.dropout = nn.Dropout(0.3)
+
 
     def forward(self, x):
         # apply first convolution and save the output as a residual
@@ -187,6 +199,8 @@ class ExtResNetBlock(nn.Module):
 
         out += residual
         out = self.non_linearity(out)
+        if self.bdropout:
+            out = self.dropout(out)
 
         return out
 
@@ -467,7 +481,7 @@ def create_encoders(in_channels, f_maps, basic_module, conv_kernel_size, conv_pa
             # TODO: adapt for anisotropy in the data, i.e. use proper pooling kernel to make the data isotropic after 1-2 pooling operations
             encoder = Encoder(f_maps[i - 1], out_feature_num,
                               basic_module=basic_module,
-                              conv_layer_order=layer_order,
+                              conv_layer_order=layer_order+'d' if i>=len(f_maps)-2 else '',
                               conv_kernel_size=conv_kernel_size,
                               num_groups=num_groups,
                               pool_kernel_size=pool_kernel_size,

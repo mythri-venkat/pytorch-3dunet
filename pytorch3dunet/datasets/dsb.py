@@ -207,7 +207,7 @@ class NiiDataset(ConfigDataset):
             return self.raw_transform(img), self.masks_transform(mask),boxes
         else:
             mask = self.masks[idx]
-            boxes=self.get_cropped_structure(mask)
+            boxes=self.boxes[idx]
             return self.raw_transform(img), self.masks_transform(mask),boxes, self.subjects[idx]
 
     def bbox2_3D(self,img,icls=0):
@@ -247,47 +247,33 @@ class NiiDataset(ConfigDataset):
             box = self.bbox2_3D(lbl,icls)
             center = [int((box[1] + box[0]) / 2), int((box[3] + box[2]) / 2), int((box[5] + box[4]) / 2)]
             
-            
-            b1=(box[1]-box[0])
-            b2=(box[3]-box[2])
-            b3=(box[5]-box[4])
-            bmax = max(b1,b2,b3)
-            if bmax<48:
-                box[0]=center[0]-int(math.floor(bmax/2))
-                box[1]=center[0]+int(math.floor(bmax/2))                
-                box[2]=center[1]-int(math.floor(bmax/2))
-                box[3]=center[1]+int(math.floor(bmax/2))
-                box[4]=center[2]-int(math.floor(bmax/2))                
-                box[5]=center[2]+int(math.floor(bmax/2))    
-            else:
-                b1=self.getpwr(b1)
-                b2=self.getpwr(b2)
-                b3=self.getpwr(b3)
-                                
-                box[0]=center[0]-int(math.floor(b1/2))
-                box[1]=center[0]+int(math.floor(b1/2))
-                if box[0]<0:
-                    box[0]=0
-                    box[1]+=1
-                if box[1]>128:
-                    box[1]=128
-                    box[0]-=1
-                box[2]=center[1]-int(math.floor(b2/2))
-                box[3]=center[1]+int(math.floor(b2/2))
-                if box[2]<0:
-                    box[2]=0
-                    box[3]+=1
-                if box[3]>128:
-                    box[3]=128
-                    box[2]-=1
-                box[4]=center[2]-int(math.floor(b3/2))
-                box[5]=center[2]+int(math.floor(b3/2))
-                if box[4]<0:
-                    box[4]=0
-                    box[5]+=1
-                if box[5]>128:
-                    box[5]=128
-                    box[4]-=1
+            b1=self.getpwr(box[1]-box[0])
+            b2=self.getpwr(box[3]-box[2])
+            b3=self.getpwr(box[5]-box[4])
+            box[0]=center[0]-int(math.floor(b1/2))
+            box[1]=center[0]+int(math.floor(b1/2))
+            if box[0]<0:
+                box[0]=0
+                box[1]+=1
+            if box[1]>128:
+                box[1]=128
+                box[0]-=1
+            box[2]=center[1]-int(math.floor(b2/2))
+            box[3]=center[1]+int(math.floor(b2/2))
+            if box[2]<0:
+                box[2]=0
+                box[3]+=1
+            if box[3]>128:
+                box[3]=128
+                box[2]-=1
+            box[4]=center[2]-int(math.floor(b3/2))
+            box[5]=center[2]+int(math.floor(b3/2))
+            if box[4]<0:
+                box[4]=0
+                box[5]+=1
+            if box[5]>128:
+                box[5]=128
+                box[4]-=1
             
             boxes.append(box)
         # img_cropped = img[int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
