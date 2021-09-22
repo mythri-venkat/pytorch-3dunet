@@ -353,7 +353,7 @@ class NiiPredictor(_AbstractPredictor):
         eval_scores = np.array(eval_scores)
         
         if os.path.isdir(os.path.dirname(self.config['model_path'])):
-            outfile = self.config['model_path'] +'summary.csv'
+            outfile = os.path.dirname(self.config['model_path']) +'/summary.csv'
         else:
             outfile = 'summary.csv'
         dct={}        

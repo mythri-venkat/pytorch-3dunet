@@ -143,7 +143,7 @@ class DSB2018Dataset(ConfigDataset):
     
 class NiiDataset(ConfigDataset):
     def __init__(self, root_dir, phase, transformer_config, mirror_padding=(0, 32, 32), expand_dims=True,
-                 instance_ratio=None, random_seed=0):
+                 instance_ratio=None, random_seed=0,patch_shape=(80,80,80)):
         # assert os.path.isdir(root_dir), f'{root_dir} is not a directory'
         assert phase in ['train', 'val', 'test']
 
@@ -174,6 +174,7 @@ class NiiDataset(ConfigDataset):
         self.raw_transform = transformer.raw_transform()
         
         self.raws = [np.array(self.images[0].shape)]
+        self.patch_shape = patch_shape
         # print(self.raws,self.raws[0])
         # if phase != 'test':
             # load labeled images
@@ -182,6 +183,7 @@ class NiiDataset(ConfigDataset):
         self.mask_paths = self._load_files(root_dir,phase, '_seg_ana_1mm_center_cropped.nii.gz')
         self.masks = self._load_masks(self.mask_paths)
         self.boxes=[self.get_cropped_structure(mask) for mask in self.masks]
+        # print([(box[1]-box[0],box[3]-box[2],box[5]-box[4]) for box in self.boxes[0]])
         assert len(self.paths) == len(self.masks)
         # load label images transformer
         self.masks_transform = transformer.label_transform()
@@ -226,6 +228,8 @@ class NiiDataset(ConfigDataset):
     def getpwr(self,n):
         pos=math.ceil(math.log(n,2))
         pwr = math.pow(2,pos)
+        if pwr>self.patch_shape[0]:
+            return n
         if pwr <= 4:
             pwr =8
     
@@ -255,24 +259,24 @@ class NiiDataset(ConfigDataset):
             if box[0]<0:
                 box[0]=0
                 box[1]+=1
-            if box[1]>128:
-                box[1]=128
+            if box[1]>self.patch_shape[0]:
+                box[1]=self.patch_shape[0]
                 box[0]-=1
             box[2]=center[1]-int(math.floor(b2/2))
             box[3]=center[1]+int(math.floor(b2/2))
             if box[2]<0:
                 box[2]=0
                 box[3]+=1
-            if box[3]>128:
-                box[3]=128
+            if box[3]>self.patch_shape[0]:
+                box[3]=self.patch_shape[0]
                 box[2]-=1
             box[4]=center[2]-int(math.floor(b3/2))
             box[5]=center[2]+int(math.floor(b3/2))
             if box[4]<0:
                 box[4]=0
                 box[5]+=1
-            if box[5]>128:
-                box[5]=128
+            if box[5]>self.patch_shape[0]:
+                box[5]=self.patch_shape[0]
                 box[4]-=1
             
             boxes.append(box)
@@ -296,12 +300,13 @@ class NiiDataset(ConfigDataset):
         transformer_config = phase_config['transformer']
         # load files to process
         file_paths = phase_config['file_paths']
+        patch_shape = phase_config['slice_builder']['patch_shape']
         # mirror padding conf
         mirror_padding = dataset_config.get('mirror_padding', None)
         expand_dims = dataset_config.get('expand_dims', True)
         instance_ratio = phase_config.get('instance_ratio', None)
         random_seed = phase_config.get('random_seed', 0)
-        return [cls(file_paths[0], phase, transformer_config, mirror_padding, expand_dims, instance_ratio, random_seed)]
+        return [cls(file_paths[0], phase, transformer_config, mirror_padding, expand_dims, instance_ratio, random_seed,patch_shape)]
 
     @staticmethod
     def _load_nii(path,expand_dims):
