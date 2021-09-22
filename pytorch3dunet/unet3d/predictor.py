@@ -4,11 +4,13 @@ import h5py
 import numpy as np
 import torch
 from skimage import measure
+import nibabel as nib
 
 from pytorch3dunet.datasets.hdf5 import AbstractHDF5Dataset
 from pytorch3dunet.datasets.utils import SliceBuilder
 from pytorch3dunet.unet3d.utils import get_logger
 from pytorch3dunet.unet3d.utils import remove_halo
+
 
 logger = get_logger('UNetPredictor')
 
@@ -82,7 +84,7 @@ class StandardPredictor(_AbstractPredictor):
         super().__init__(model, output_dir, config, **kwargs)
 
     def __call__(self, test_loader):
-        assert isinstance(test_loader.dataset, AbstractHDF5Dataset)
+        # assert isinstance(test_loader.dataset, AbstractHDF5Dataset)
 
         logger.info(f"Processing '{test_loader.dataset.file_path}'...")
         output_file = _get_output_file(dataset=test_loader.dataset, output_dir=self.output_dir)
@@ -211,6 +213,68 @@ class StandardPredictor(_AbstractPredictor):
         assert np.all(
             patch_overlap - patch_halo >= 0), f"Not enough patch overlap for stride: {stride} and halo: {patch_halo}"
 
+
+class NiiPredictor(_AbstractPredictor):
+    """
+    Applies the model on the given dataset and saves the result as H5 file.
+    Predictions from the network are kept in memory. If the results from the network don't fit in into RAM
+    use `LazyPredictor` instead.
+
+    The output dataset names inside the H5 is given by `dest_dataset_name` config argument. If the argument is
+    not present in the config 'predictions{n}' is used as a default dataset name, where `n` denotes the number
+    of the output head from the network.
+
+    Args:
+        model (Unet3D): trained 3D UNet model used for prediction
+        output_dir (str): path to the output directory (optional)
+        config (dict): global config dict
+    """
+
+    def __init__(self, model, output_dir, config, **kwargs):
+        super().__init__(model, output_dir, config, **kwargs)
+
+    def __call__(self, test_loader):
+        # assert isinstance(test_loader.dataset, AbstractHDF5Dataset)
+
+        logger.info(f"Processing '{test_loader.dataset.file_path}'...")
+        # output_file = _get_output_file(dataset=test_loader.dataset, output_dir=self.output_dir)
+
+        out_channels = self.config['model'].get('out_channels')
+
+        prediction_channel = self.config.get('prediction_channel', None)
+        if prediction_channel is not None:
+            logger.info(f"Saving only channel '{prediction_channel}' from the network output")
+
+        device = self.config['device']
+        output_heads = self.config['model'].get('output_heads', 1)
+
+        logger.info(f'Running prediction on {len(test_loader)} batches...')
+
+        
+
+
+        # Sets the module in evaluation mode explicitly (necessary for batchnorm/dropout layers if present)
+        self.model.eval()
+        # Set the `testing=true` flag otherwise the final Softmax/Sigmoid won't be applied!
+        self.model.testing = True
+        # Run predictions on the entire input dataset
+        with torch.no_grad():
+            for batch, subject in test_loader:
+                # send batch to device
+                batch = batch.to(device)
+                # forward pass
+                predictions = self.model(batch)
+                output_file=self._save_results(predictions,subject)
+                # save results
+                logger.info(f'Saving predictions to: {output_file}')
+
+
+    def _save_results(self,predictions,subject):
+        pred = np.argmax(predictions.cpu().numpy(),1)
+        outfile = self.output_dir+subject[0]+'.nii.gz'
+        img = nib.Nifti1Image(pred,np.eye(4))
+        nib.save(img,outfile)
+        return outfile
 
 class LazyPredictor(StandardPredictor):
     """

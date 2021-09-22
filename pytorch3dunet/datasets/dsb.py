@@ -4,6 +4,8 @@ import os
 import imageio
 import numpy as np
 import torch
+import nibabel as nib
+import json
 
 from pytorch3dunet.augment import transforms
 from pytorch3dunet.datasets.utils import ConfigDataset, calculate_stats, sample_instances
@@ -137,3 +139,246 @@ class DSB2018Dataset(ConfigDataset):
             paths.append(path)
 
         return files_data, paths
+
+
+class IBADataset(ConfigDataset):
+    def __init__(self, root_dir, phase, transformer_config, mirror_padding=(0, 32, 32), expand_dims=True,
+                 instance_ratio=None, random_seed=0):
+        # assert os.path.isdir(root_dir), f'{root_dir} is not a directory'
+        assert phase in ['train', 'val', 'test']
+
+        # use mirror padding only during the 'test' phase
+        if phase in ['train', 'val']:
+            mirror_padding = None
+        if mirror_padding is not None:
+            assert len(mirror_padding) == 3, f"Invalid mirror_padding: {mirror_padding}"
+        self.mirror_padding = mirror_padding
+
+        self.phase = phase
+
+        # load raw images
+        # images_dir = os.path.join(root_dir, 'images')
+        # assert os.path.isdir(images_dir)
+        self.paths = self._load_files(root_dir,phase, '_ana_strip.nii.gz')
+        # self.file_path = images_dir
+        self.instance_ratio = instance_ratio
+
+        # min_value, max_value, mean, std = calculate_stats(self.images)
+        # logger.info(f'Input stats: min={min_value}, max={max_value}, mean={mean}, std={std}')
+
+        transformer = transforms.get_transformer(transformer_config, min_value=min_value, max_value=max_value,
+                                                 mean=mean, std=std)
+
+        # load raw images transformer
+        self.raw_transform = transformer.raw_transform()
+        self.expand_dims = expand_dims
+
+        if phase != 'test':
+            # load labeled images
+            # masks_dir = os.path.join(root_dir, 'masks')
+            # assert os.path.isdir(masks_dir)
+            self.mask_paths = self._load_files(root_dir,phase, '_seg_ana.nii.gz')
+            
+            
+            assert len(self.paths) == len(self.mask_paths)
+            # load label images transformer
+            self.masks_transform = transformer.label_transform()
+        else:
+            self.masks = None
+            self.masks_transform = None
+
+
+
+    def __getitem__(self, idx):
+        if idx >= len(self):
+            raise StopIteration
+
+        img = self._load_nii(self.paths[idx])
+        if self.phase != 'test':
+            mask = self._load_nii(self.mask_paths[idx])
+            return self.raw_transform(img), self.masks_transform(mask)
+        else:
+            return self.raw_transform(img), self.paths[idx]
+
+    def __len__(self):
+        return len(self.images)
+
+    
+
+
+    @classmethod
+    def prediction_collate(cls, batch):
+        return dsb_prediction_collate(batch)
+
+    @classmethod
+    def create_datasets(cls, dataset_config, phase):
+        phase_config = dataset_config[phase]
+        # load data augmentation configuration
+        transformer_config = phase_config['transformer']
+        # load files to process
+        file_paths = phase_config['file_paths']
+        # mirror padding conf
+        mirror_padding = dataset_config.get('mirror_padding', None)
+        expand_dims = dataset_config.get('expand_dims', True)
+        instance_ratio = phase_config.get('instance_ratio', None)
+        random_seed = phase_config.get('random_seed', 0)
+        return [cls(file_paths[0], phase, transformer_config, mirror_padding, expand_dims, instance_ratio, random_seed)]
+
+    @staticmethod
+    def _load_nii(path,expand_dims):
+        img = nib.load(path).get_fdata()
+        if expand_dims:
+                dims = img.ndim
+                img = np.expand_dims(img, axis=0)
+                if dims == 3:
+                    img = np.transpose(img, (3, 0, 1, 2))
+    @staticmethod
+    def read_pkl(path,phase):
+        with open(path,'r') as f:
+            dct = json.load(f)
+        return dct[phase]
+
+    @staticmethod
+    def _load_files(path,phase, suffix):
+        with open(path,'r') as f:
+            dct = json.load(f)
+        paths = [f+suffix for f in dct[phase]]
+        return paths
+
+        
+class NiiDataset(ConfigDataset):
+    def __init__(self, root_dir, phase, transformer_config, mirror_padding=(0, 32, 32), expand_dims=True,
+                 instance_ratio=None, random_seed=0):
+        # assert os.path.isdir(root_dir), f'{root_dir} is not a directory'
+        assert phase in ['train', 'val', 'test']
+
+        # use mirror padding only during the 'test' phase
+        if phase in ['train', 'val']:
+            mirror_padding = None
+        if mirror_padding is not None:
+            assert len(mirror_padding) == 3, f"Invalid mirror_padding: {mirror_padding}"
+        self.mirror_padding = mirror_padding
+
+        self.phase = phase
+
+        # load raw images
+        # images_dir = os.path.join(root_dir, 'images')
+        # assert os.path.isdir(images_dir)
+        self.paths = self._load_files(root_dir,phase, '_ana_strip_1mm_center_cropped.nii.gz')
+        self.images = self._load_images(self.paths,expand_dims=expand_dims)
+        self.file_path = root_dir
+        self.instance_ratio = instance_ratio
+
+        min_value, max_value, mean, std = calculate_stats(self.images)
+        logger.info(f'Input stats: min={min_value}, max={max_value}, mean={mean}, std={std}')
+
+        transformer = transforms.get_transformer(transformer_config, min_value=min_value, max_value=max_value,
+                                                 mean=mean, std=std)
+
+        # load raw images transformer
+        self.raw_transform = transformer.raw_transform()
+        
+        self.raws = [np.array(self.images[0].shape)]
+        # print(self.raws,self.raws[0])
+        if phase != 'test':
+            # load labeled images
+            # masks_dir = os.path.join(root_dir, 'masks')
+            # assert os.path.isdir(masks_dir)
+            self.mask_paths = self._load_files(root_dir,phase, '_seg_ana_1mm_center_cropped.nii.gz')
+            self.masks = self._load_masks(self.mask_paths)
+            
+            
+            assert len(self.paths) == len(self.masks)
+            # load label images transformer
+            self.masks_transform = transformer.label_transform()
+        else:
+            self.masks = None
+            self.masks_transform = None
+            self.subjects = self._load_subjects(root_dir,phase)
+
+
+
+    def __getitem__(self, idx):
+        if idx >= len(self):
+            raise StopIteration
+
+        img =self.images[idx]
+        if self.phase != 'test':
+            mask = self.masks[idx]
+            return self.raw_transform(img), self.masks_transform(mask)
+        else:
+            return self.raw_transform(img), self.subjects[idx]
+
+    def __len__(self):
+        return len(self.images)
+
+    @classmethod
+    def prediction_collate(cls, batch):
+        return None
+
+    @classmethod
+    def create_datasets(cls, dataset_config, phase):
+        phase_config = dataset_config[phase]
+        # load data augmentation configuration
+        transformer_config = phase_config['transformer']
+        # load files to process
+        file_paths = phase_config['file_paths']
+        # mirror padding conf
+        mirror_padding = dataset_config.get('mirror_padding', None)
+        expand_dims = dataset_config.get('expand_dims', True)
+        instance_ratio = phase_config.get('instance_ratio', None)
+        random_seed = phase_config.get('random_seed', 0)
+        return [cls(file_paths[0], phase, transformer_config, mirror_padding, expand_dims, instance_ratio, random_seed)]
+
+    @staticmethod
+    def _load_nii(path,expand_dims):
+        img = nib.load(path).get_fdata()
+        if expand_dims:
+                dims = img.ndim
+                img = np.expand_dims(img, axis=0)
+                if dims == 3:
+                    img = np.transpose(img, (3, 0, 1, 2))
+
+    @staticmethod
+    def _load_images(paths,expand_dims=False):
+        images = []
+        
+        for path in paths:
+            img = nib.load(path).get_fdata()
+            if expand_dims:
+                dims = img.ndim
+                img = np.expand_dims(img, axis=0)
+                # if dims == 3:
+                #     img = np.transpose(img, (3, 0, 1, 2))
+            images.append(img)
+        return images
+
+    @staticmethod
+    def _load_masks(paths):
+        images = []
+        
+        for path in paths:
+            img = nib.load(path).get_fdata()
+            images.append(img.astype(np.int64))
+        return images
+
+    @staticmethod
+    def read_pkl(path,phase):
+        with open(path,'r') as f:
+            dct = json.load(f)
+        return dct[phase]
+
+    @staticmethod
+    def _load_files(path,phase, suffix):
+        with open(path,'r') as f:
+            dct = json.load(f)
+        paths = [f+suffix for f in dct[phase]]
+        return paths
+
+    @staticmethod
+    def _load_subjects(path,phase):
+        with open(path,'r') as f:
+            dct = json.load(f)
+        
+        paths = [f.split('/')[-1] for f in dct[phase]]
+        return paths
