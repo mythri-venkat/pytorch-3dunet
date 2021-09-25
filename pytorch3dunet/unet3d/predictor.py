@@ -13,6 +13,7 @@ from pytorch3dunet.unet3d.utils import remove_halo
 from pytorch3dunet.unet3d.metrics import get_evaluation_metric
 import pandas as pa
 import torch.nn.functional as F
+from . import utils
 
 
 logger = get_logger('UNetPredictor')
@@ -320,7 +321,7 @@ class NiiPredictor(_AbstractPredictor):
         # Run predictions on the entire input dataset
         with torch.no_grad():
             eval_scores = []
-            for batch,target,boxes, subject in test_loader:
+            for batch,target,boxes, subject,atlas in test_loader:
                 # send batch to device
                 batch = batch.to(device)
                 target = target.to(device)
@@ -338,6 +339,117 @@ class NiiPredictor(_AbstractPredictor):
 
                 
                 prediction = self.stitch_patches1(predictions,bnoutputs,boxes,batch.shape,binterps)
+                
+                eval_score = self.eval_criterion(prediction,target)
+                eval_scores.append(eval_score.cpu().numpy())
+                output_file=self._save_results(prediction,subject)
+                
+                # save results
+                logger.info(f'Saving predictions to: {output_file}')
+            avg12,avg14=self._evaluate_save_results(eval_scores)
+            logger.info(f'Results: {avg12},{avg14}')
+
+    def _evaluate_save_results(self,eval_scores):
+        
+        eval_scores = np.array(eval_scores)
+        
+        if os.path.isdir(os.path.dirname(self.config['model_path'])):
+            outfile = os.path.dirname(self.config['model_path']) +'/summary.csv'
+        else:
+            outfile = 'summary.csv'
+        dct={}        
+        avg =  np.mean(eval_scores,0).tolist()
+        avg.extend([np.mean(eval_scores[:,3:]),np.mean(eval_scores[:,1:])])
+        std = np.std(eval_scores,0).tolist()
+        std.extend([np.std(eval_scores[:,3:]),np.std(eval_scores[:,1:])])
+        dct['dice_mean'] = avg
+        dct['dice_std'] = std
+        df = pa.DataFrame(dct)
+        df.to_csv(outfile)
+        return avg[-2],avg[-1]
+
+
+    def _save_results(self,prediction,subject):
+        
+        prediction = prediction.cpu().numpy()
+        outfile = self.output_dir+subject[0]+'.nii.gz'
+        img = nib.Nifti1Image(prediction,np.eye(4))
+        nib.save(img,outfile)
+        return outfile
+
+class CascadedNiiPredictor(_AbstractPredictor):
+    """
+    Applies the model on the given dataset and saves the result as H5 file.
+    Predictions from the network are kept in memory. If the results from the network don't fit in into RAM
+    use `LazyPredictor` instead.
+
+    The output dataset names inside the H5 is given by `dest_dataset_name` config argument. If the argument is
+    not present in the config 'predictions{n}' is used as a default dataset name, where `n` denotes the number
+    of the output head from the network.
+
+    Args:
+        model (Unet3D): trained 3D UNet model used for prediction
+        output_dir (str): path to the output directory (optional)
+        config (dict): global config dict
+    """
+
+    def __init__(self,model0, model, output_dir, config, **kwargs):
+        super().__init__(model, output_dir, config, **kwargs)
+        self.device = self.config['device']
+        self.eval_criterion = get_evaluation_metric(self.config)
+        self.model0 = model0
+
+
+    def __call__(self, test_loader):
+        # assert isinstance(test_loader.dataset, AbstractHDF5Dataset)
+
+        logger.info(f"Processing '{test_loader.dataset.file_path}'...")
+        # output_file = _get_output_file(dataset=test_loader.dataset, output_dir=self.output_dir)
+
+        out_channels = self.config['model'].get('out_channels')
+
+        prediction_channel = self.config.get('prediction_channel', None)
+        if prediction_channel is not None:
+            logger.info(f"Saving only channel '{prediction_channel}' from the network output")
+
+        device = self.device
+        output_heads = self.config['model'].get('output_heads', 1)
+
+        logger.info(f'Running prediction on {len(test_loader)} batches...')
+
+        
+
+
+        # Sets the module in evaluation mode explicitly (necessary for batchnorm/dropout layers if present)
+        self.model.eval()
+        self.model0.eval()
+        # Set the `testing=true` flag otherwise the final Softmax/Sigmoid won't be applied!
+        self.model.testing = True
+        self.model0.testing = False
+        # Run predictions on the entire input dataset
+        with torch.no_grad():
+            eval_scores = []
+            for batch,target,boxes, subject,atlas in test_loader:
+                # send batch to device
+                batch = batch.to(device)
+                target = target.to(device)
+
+                output=self.model0(batch)
+                boxes = utils.get_roi(output,atlas)
+                predictions=[]
+                
+                binterps=[]
+                # eval_score=[]
+                for i in range(len(boxes)):
+                    input_cropped,target_cropped,binterp = utils.get_patches(batch,target,boxes[i],i)
+                    binterps.append(binterp)
+                    prediction = self.model(input_cropped)
+                    predictions.append(prediction)
+                    # bnoutputs.append(prediction[:,i,...] > 0.5)
+                    # eval_score.append(self.eval_criterion(bnoutputs[i], target_cropped))
+
+                
+                prediction = utils.stitch_patches(predictions,boxes,batch.shape,binterps)
                 
                 eval_score = self.eval_criterion(prediction,target)
                 eval_scores.append(eval_score.cpu().numpy())

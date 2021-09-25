@@ -9,6 +9,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch import optim
+import math
+import torch.nn.functional as F
+import itertools
 
 plt.ioff()
 plt.switch_backend('agg')
@@ -67,6 +70,166 @@ def load_checkpoint(checkpoint_path, model, optimizer=None,
         optimizer.load_state_dict(state[optimizer_key])
 
     return state
+
+def load_pretrained_checkpoint(checkpoint_path, model, optimizer=None,
+                    model_key='model_state_dict', optimizer_key='optimizer_state_dict'):
+    """Loads model and training parameters from a given checkpoint_path
+    If optimizer is provided, loads optimizer's state_dict of as well.
+
+    Args:
+        checkpoint_path (string): path to the checkpoint to be loaded
+        model (torch.nn.Module): model into which the parameters are to be copied
+        optimizer (torch.optim.Optimizer) optional: optimizer instance into
+            which the parameters are to be copied
+
+    Returns:
+        state
+    """
+    if not os.path.exists(checkpoint_path):
+        raise IOError(f"Checkpoint '{checkpoint_path}' does not exist")
+
+    state = torch.load(checkpoint_path, map_location='cpu')
+    del state[model_key]['final_conv.weight']
+    del state[model_key]['final_conv.bias']
+    model.load_state_dict(state[model_key])
+
+    if optimizer is not None:
+        optimizer.load_state_dict(state[optimizer_key])
+
+    return state
+
+def get_patches(input,target,box,i):
+
+    input_cropped = input[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
+    target_cropped = target[:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
+    binterp = False
+    patch_size=(48,48,48)
+    if (box[1]-box[0]) > 48:
+        patch_size = (80,80,80)
+
+    binterp = True
+    input_cropped = F.interpolate(input_cropped,size=patch_size,mode='trilinear')
+    target_cropped = target_cropped.float().unsqueeze(1)/15
+    target_cropped = F.interpolate(target_cropped,size=patch_size,mode='nearest').squeeze(1)
+    target_cropped = (target_cropped*15).long()
+    # target_cropped[target_cropped != i] =0 
+    return input_cropped,target_cropped,binterp
+
+
+def stitch_patches(outputs,boxes,shape,binterps,ncls=15):
+    
+    b,c,w,h,d = shape
+    output = torch.zeros(b,ncls,w,h,d)
+    output = output.to(outputs[0].device)
+    counter = torch.zeros(b,ncls,w,h,d)
+
+    counter = counter.to(outputs[0].device)
+    for i,box in enumerate(boxes):
+        fs = outputs[i]
+        # if (box[1]-box[0]) < 48:
+        if binterps[i]:
+            fs = F.interpolate(fs,size=(int(box[1]-box[0]),int(box[3]-box[2]),int(box[5]-box[4])),mode='trilinear')
+        output[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]+=fs
+        counter[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]+=1
+
+        # # fs = fs.to(self.device)
+        # c = output[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]<fs
+        # d = torch.where(c)
+        # output[:,:,box[0]+d[2],box[2]+d[3],box[4]+d[4]]=fs[c]
+    output =output/counter
+    output = torch.argmax(output,1)
+    return output
+
+def get_roi(output,atlas):
+    output = torch.argmax(output,1)
+    boxes = get_cropped_structure(output)
+    return boxes
+
+
+def bbox2_3D(img,icls=0):
+
+    r = torch.any(torch.any(img == icls, dim=2),dim=2)
+    c = torch.any(torch.any(img == icls, dim=1),dim=2)
+    z = torch.any(torch.any(img == icls, dim=1),dim=1)
+    rmin, rmax = torch.where(r)[1][[0, -1]]
+    cmin, cmax = torch.where(c)[1][[0, -1]]
+    zmin, zmax = torch.where(z)[1][[0, -1]]
+    
+
+    return [rmin,rmax,cmin,cmax,zmin,zmax]
+
+def getpwr(n,lbl_shape=(80,80,80)):
+    pos=math.ceil(math.log(n,2))
+    pwr = math.pow(2,pos)
+
+    if pwr>lbl_shape[0]:      
+        return lbl_shape[0]
+    if pwr <= 8:
+        pwr =16
+
+    if n<48 and (48-n)<(pwr-n):
+        pwr = 48
+    if n<40 and (40-n)<(pwr-n):
+        pwr = 40
+    if n<24 and (40-n)<(pwr-n):
+        pwr = 24
+    if n<20 and (20-n)<(pwr-n):
+        pwr = 20
+    
+    return pwr
+    
+
+def get_cropped_structure(lbl,ncls=15,patch_shape=(48,48,48)):
+    # print(lbl.shape)
+    boxes=[]
+    lbl_shape = lbl.shape[1:]
+    for icls in range(ncls):
+        box = bbox2_3D(lbl,icls)
+        if icls == 0:
+            box[0],box[1],box[2],box[3],box[4],box[5] = 0,lbl_shape[0],0,lbl_shape[1],0,lbl_shape[2]
+        center = [int((box[1] + box[0]) / 2), int((box[3] + box[2]) / 2), int((box[5] + box[4]) / 2)]
+            
+        b1=(box[1]-box[0])
+        b2=(box[3]-box[2])
+        b3=(box[5]-box[4])
+
+        if b1 == lbl_shape[0] and b2 == lbl_shape[1] and b3 ==lbl_shape[2]:
+            center = [int(lbl_shape[0] / 2), int(lbl_shape[1] / 2), int(lbl_shape[2] / 2)]
+
+        
+        box[0]=center[0]-int(math.floor(b1/2))
+        box[1]=center[0]+int(math.floor(b1/2))
+
+        if box[0]<0:
+            box[0]=0
+            box[1]+=1
+        if box[1]>lbl_shape[0]:
+            box[1]=lbl_shape[0]
+            box[0]-=1
+        box[2]=center[1]-int(math.floor(b2/2))
+        box[3]=center[1]+int(math.floor(b2/2))
+        if box[2]<0:
+            box[2]=0
+            box[3]+=1
+        if box[3]>lbl_shape[0]:
+            box[3]=lbl_shape[0]
+            box[2]-=1
+        box[4]=center[2]-int(math.floor(b3/2))
+        box[5]=center[2]+int(math.floor(b3/2))
+        if box[4]<0:
+            box[4]=0
+            box[5]+=1
+        if box[5]>lbl_shape[0]:
+            box[5]=lbl_shape[0]
+            box[4]-=1
+        # print("c",(box[1]-box[0],box[3]-box[2],box[5]-box[4]))
+        
+        boxes.append(box)
+    boxes.sort()
+    boxes = list(k for k,_ in itertools.groupby(boxes))
+    # print(len(boxes))
+    # print(boxes)
+    return boxes
 
 
 def save_network_output(output_path, output, logger=None):

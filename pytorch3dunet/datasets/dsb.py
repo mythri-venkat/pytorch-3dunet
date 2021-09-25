@@ -143,7 +143,7 @@ class DSB2018Dataset(ConfigDataset):
     
 class NiiDataset(ConfigDataset):
     def __init__(self, root_dir, phase, transformer_config, mirror_padding=(0, 32, 32), expand_dims=True,
-                 instance_ratio=None, random_seed=0,patch_shape=(80,80,80)):
+                 instance_ratio=None, random_seed=0,patch_shape=(80,80,80),atlas_path=None):
         # assert os.path.isdir(root_dir), f'{root_dir} is not a directory'
         assert phase in ['train', 'val', 'test']
 
@@ -161,6 +161,7 @@ class NiiDataset(ConfigDataset):
         # assert os.path.isdir(images_dir)
         self.paths = self._load_files(root_dir,phase, '_ana_strip_1mm_center_cropped.nii.gz')
         self.images = self._load_images(self.paths,expand_dims=expand_dims)
+        self.atlas = self._load_nii(atlas_path,True) if atlas_path else None
         self.file_path = root_dir
         self.instance_ratio = instance_ratio
         self.expand_dims=expand_dims
@@ -206,11 +207,11 @@ class NiiDataset(ConfigDataset):
             
             if self.expand_dims:
                 img = np.expand_dims(img, axis=0)
-            return self.raw_transform(img), self.masks_transform(mask),boxes
+            return self.raw_transform(img), self.masks_transform(mask),boxes,self.atlas
         else:
             mask = self.masks[idx]
             boxes=self.boxes[idx]
-            return self.raw_transform(img), self.masks_transform(mask),boxes, self.subjects[idx]
+            return self.raw_transform(img), self.masks_transform(mask),boxes, self.subjects[idx],self.atlas
 
     def bbox2_3D(self,img,icls=0):
 
@@ -301,23 +302,19 @@ class NiiDataset(ConfigDataset):
         transformer_config = phase_config['transformer']
         # load files to process
         file_paths = phase_config['file_paths']
+        atlas_path = phase_config.get('atlas_path',None)
         patch_shape = phase_config['slice_builder']['patch_shape']
         # mirror padding conf
         mirror_padding = dataset_config.get('mirror_padding', None)
         expand_dims = dataset_config.get('expand_dims', True)
         instance_ratio = phase_config.get('instance_ratio', None)
         random_seed = phase_config.get('random_seed', 0)
-        return [cls(file_paths[0], phase, transformer_config, mirror_padding, expand_dims, instance_ratio, random_seed,patch_shape)]
+        return [cls(file_paths[0], phase, transformer_config, mirror_padding, expand_dims, instance_ratio, random_seed,patch_shape,atlas_path)]
 
     @staticmethod
     def _load_nii(path,expand_dims):
         img = nib.load(path).get_fdata()
-        print(expand_dims)
-        if expand_dims:
-                dims = img.ndim
-                img = np.expand_dims(img, axis=0)
-                if dims == 3:
-                    img = np.transpose(img, (3, 0, 1, 2))
+        return img
 
     @staticmethod
     def _load_images(paths,expand_dims=False):

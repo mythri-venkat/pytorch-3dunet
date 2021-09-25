@@ -256,6 +256,19 @@ class WeightedSmoothL1Loss(nn.SmoothL1Loss):
 
         return l1.mean()
 
+class ROILoss(nn.Module):
+    def __init__(self,weight,ignore_index):
+        super(ROILoss, self).__init__()
+        self.ce1 = nn.CrossEntropyLoss(weight=weight, ignore_index=ignore_index)
+        self.ce2 = nn.CrossEntropyLoss(weight=None, ignore_index=ignore_index)
+    def __call__(self, pred,target,pred_cropped,target_cropped,crop=True):
+        l1 = self.ce1(pred,target) 
+         
+        if crop:
+            l2 = self.ce2(pred_cropped,target_cropped)
+            return l1+l2
+        else:
+            return l1
 
 def flatten(tensor):
     """Flattens a given tensor such that the channel axis is first.
@@ -342,5 +355,9 @@ def _create_loss(name, loss_config, weight, ignore_index, pos_weight):
         return WeightedSmoothL1Loss(threshold=loss_config['threshold'],
                                     initial_weight=loss_config['initial_weight'],
                                     apply_below_threshold=loss_config.get('apply_below_threshold', True))
+    elif name == "ROILoss":
+        if ignore_index is None:
+            ignore_index = -100  # use the default 'ignore_index' as defined in the CrossEntropyLoss
+        return ROILoss(weight=weight,ignore_index=ignore_index)
     else:
         raise RuntimeError(f"Unsupported loss function: '{name}'")

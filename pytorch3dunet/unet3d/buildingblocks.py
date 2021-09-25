@@ -165,7 +165,6 @@ class ExtResNetBlock(nn.Module):
 
         self.bdropout = 'd'  in order
         order=order.replace('d','')
-        
         # first convolution
         self.conv1 = SingleConv(in_channels, out_channels, kernel_size=kernel_size, order=order, num_groups=num_groups)
         # residual block
@@ -481,7 +480,7 @@ def create_encoders(in_channels, f_maps, basic_module, conv_kernel_size, conv_pa
             # TODO: adapt for anisotropy in the data, i.e. use proper pooling kernel to make the data isotropic after 1-2 pooling operations
             encoder = Encoder(f_maps[i - 1], out_feature_num,
                               basic_module=basic_module,
-                              conv_layer_order=layer_order+'d' if i>=len(f_maps)-2 else '',
+                              conv_layer_order=layer_order+'d' if i>=len(f_maps)-2 else layer_order,
                               conv_kernel_size=conv_kernel_size,
                               num_groups=num_groups,
                               pool_kernel_size=pool_kernel_size,
