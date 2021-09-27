@@ -321,18 +321,18 @@ class NiiPredictor(_AbstractPredictor):
         # Run predictions on the entire input dataset
         with torch.no_grad():
             eval_scores = []
-            for batch,target, subject in test_loader:
+            for batch,target, subject,atlas in test_loader:
                 # send batch to device
                 batch = batch.to(device)
                 target = target.to(device)
 
-                output =  self.model(batch)
+                #output =  self.model(batch)
 
                 predictions=[]
                 bnoutputs=[]
                 binterps=[]
                 if self.roi_patches:
-                    boxes= utils.get_roi(output)
+                    boxes= utils.get_roi(None,atlas)
                     for i in range(len(boxes)):
                         input_cropped,target_cropped,binterp = utils.get_patches(batch,target,boxes[i],i)
                         binterps.append(binterp)
@@ -435,12 +435,10 @@ class CascadedNiiPredictor(_AbstractPredictor):
         # Run predictions on the entire input dataset
         with torch.no_grad():
             eval_scores = []
-            for it,t in test_loader:
-                input, target, boxes,atlas = self._split_training_batch(t)
+            for t in test_loader:
+                batch, target, subject,atlas = self._split_training_batch(t)
                 # send batch to device
-                batch = batch.to(device)
-                target = target.to(device)
-
+                
                 output=self.model0(batch)
                 boxes = utils.get_roi(output,atlas)
                 predictions=[]
@@ -470,21 +468,21 @@ class CascadedNiiPredictor(_AbstractPredictor):
     def _split_training_batch(self, t):
         def _move_to_device(input):
             if isinstance(input, tuple) or isinstance(input, list):
-                return tuple([_move_to_device(x) for x in input])
+                return tuple([_move_to_device(x) if not type(x) is str else x for x in input])
             else:
                 return input.to(self.device)
 
         t = _move_to_device(t)
-        weight = None
+        subject = None
         atlas = None
         if len(t) == 2:
             input, target = t
         elif len(t) == 3:
-            input, target, weight = t
+            input, target, subject = t
         else:
-            input,target,weight,atlas = t
+            input,target,subject,atlas = t
             
-        return input, target, weight,atlas
+        return input, target, subject,atlas
 
     def _evaluate_save_results(self,eval_scores):
         

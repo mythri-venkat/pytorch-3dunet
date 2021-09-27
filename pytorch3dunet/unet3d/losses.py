@@ -33,7 +33,7 @@ def compute_per_channel_dice(input, target, epsilon=1e-6, weight=None):
 
     # here we can use standard dice (input + target).sum(-1) or extension (see V-Net) (input^2 + target^2).sum(-1)
     denominator = (input * input).sum(-1) + (target * target).sum(-1)
-    return 2 * (intersect / denominator.clamp(min=epsilon))
+    return 2 * (intersect.clamp(min=epsilon) / denominator.clamp(min=epsilon))
 
 
 class _MaskingLossWrapper(nn.Module):
@@ -293,6 +293,19 @@ class ROILossDC(nn.Module):
         else:
             return l1+ldsc1
 
+class CEDiceLoss(nn.Module):
+    def __init__(self,weight,ignore_index,normalization):
+        super(CEDiceLoss, self).__init__()
+        self.ce1 = nn.CrossEntropyLoss(weight=weight, ignore_index=ignore_index)
+
+        self.dsc1 = DiceLoss(weight=weight,normalization=normalization)
+
+    def __call__(self, pred,target):
+        l1 = self.ce1(pred,target) 
+        target= expand_as_one_hot(target,C=pred.shape[1])
+        ldsc1 = self.dsc1(pred,target)
+        return l1+ldsc1
+
 def flatten(tensor):
     """Flattens a given tensor such that the channel axis is first.
     The shapes are transformed as follows:
@@ -387,5 +400,10 @@ def _create_loss(name, loss_config, weight, ignore_index, pos_weight):
         if ignore_index is None:
             ignore_index = -100  # use the default 'ignore_index' as defined in the CrossEntropyLoss
         return ROILossDC(weight=weight,ignore_index=ignore_index,normalization=normalization)
+    elif name == "CEDiceLoss":
+        normalization = loss_config.get('normalization', 'sigmoid')
+        if ignore_index is None:
+            ignore_index = -100  # use the default 'ignore_index' as defined in the CrossEntropyLoss
+        return CEDiceLoss(weight=weight,ignore_index=ignore_index,normalization=normalization)
     else:
         raise RuntimeError(f"Unsupported loss function: '{name}'")

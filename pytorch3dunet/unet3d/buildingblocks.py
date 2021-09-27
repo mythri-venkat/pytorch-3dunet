@@ -266,7 +266,8 @@ class DenseBlock(nn.Module):
 
     def __init__(self, in_channels, out_channels, kernel_size=3, order='cge', num_groups=8, **kwargs):
         super(DenseBlock, self).__init__()
-
+        self.bdropout = 'd'  in order
+        order=order.replace('d','')
         # first convolution
         self.conv1 = SingleConv(in_channels, out_channels, kernel_size=kernel_size, order=order, num_groups=num_groups)
         # residual block
@@ -285,6 +286,8 @@ class DenseBlock(nn.Module):
             self.non_linearity = nn.ELU(inplace=True)
         else:
             self.non_linearity = nn.ReLU(inplace=True)
+        if self.bdropout:
+            self.dropout = nn.Dropout(0.3)
 
     def forward(self, x):
         # apply first convolution and save the output as a residual
@@ -297,6 +300,8 @@ class DenseBlock(nn.Module):
 
         out += residual
         out = self.non_linearity(out)
+        if self.bdropout:
+            out = self.dropout(out)
 
         return out
 

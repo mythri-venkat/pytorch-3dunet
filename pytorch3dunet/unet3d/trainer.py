@@ -275,13 +275,13 @@ class UNet3DTrainer:
             logger.info(f'Training iteration [{self.num_iterations}/{self.max_num_iterations}]. '
                         f'Epoch [{self.num_epoch}/{self.max_num_epochs - 1}]')
 
-            input, target, weight = self._split_training_batch(t)
-            output = self.model(input)
-
+            input, target,atlas = self._split_training_batch(t)
+            #output = self.model(input)
+            weight = None
             outputs=[]
             binterps = []
             if self.roi_patches:
-                boxes = utils.get_roi(output,None)
+                boxes = utils.get_roi(None,atlas)
                 # idxshuffle = list(range(15))
 
                 # random.shuffle(idxshuffle)
@@ -291,8 +291,9 @@ class UNet3DTrainer:
                     # i=np.random.randint(0,15)
                     input_cropped,target_cropped,binterp = utils.get_patches(input,target,boxes[i],i)
                     binterps.append(binterp)
-                    output, loss = self._forward_pass(input_cropped, target_cropped, weight)
-                    
+                    output = self.model(input_cropped)
+                    loss = self.loss_criterion(output,target_cropped)
+#                    print(type(loss))
                     outputs.append(output)
                     train_losses.update(loss.item(), self._batch_size(input_cropped))
 
@@ -341,7 +342,7 @@ class UNet3DTrainer:
                         for i,output in enumerate(outputs):
                             outputs[i]=self.model.final_activation(output)
                        
-                        output = utils.stitch_patches(outputs,bnoutputs,boxes,target.shape,binterps)
+                        output = utils.stitch_patches(outputs,boxes,input.shape,binterps)
                     else:
                         output = torch.argmax(self.model.final_activation(output),1)
                 # compute eval criterion
@@ -394,17 +395,18 @@ class UNet3DTrainer:
             for i, t in enumerate(self.loaders['val']):
                 logger.info(f'Validation iteration {i}')
 
-                input, target,weight = self._split_training_batch(t)
-                
-                output = self.model(input)
+                input, target,atlas = self._split_training_batch(t)
+                weight =None
+                #output = self.model(input)
                 if self.roi_patches:
                     outputs=[]
                     binterps = []
-                    boxes = utils.get_roi(output,None)                    
+                    boxes = utils.get_roi(None,atlas)                    
                     for i in range(len(boxes)):
                         input_cropped,target_cropped,binterp = utils.get_patches(input,target,boxes[i],i)
                         binterps.append(binterp)
-                        output, loss = self._forward_pass(input_cropped, target_cropped, weight)
+                        output = self.model(input_cropped)
+                        loss = self.loss_criterion(output, target_cropped)
                         outputs.append(output)
                         val_losses.update(loss.item(), self._batch_size(input_cropped))
                 else:
@@ -424,7 +426,7 @@ class UNet3DTrainer:
                         bnoutputs=[]
                         for i,output in enumerate(outputs):
                             outputs[i] = self.model.final_activation(output)
-                        output = utils.stitch_patches(outputs,bnoutputs,boxes,target.shape,binterps)
+                        output = utils.stitch_patches(outputs,boxes,input.shape,binterps)
                     else:
                         output = torch.argmax(self.model.final_activation(output),1)
 
@@ -453,12 +455,12 @@ class UNet3DTrainer:
                 return input.to(self.device)
 
         t = _move_to_device(t)
-        weight = None
+        atlas = None
         if len(t) == 2:
             input, target = t
         else:
-            input, target, weight = t
-        return input, target, weight
+            input, target, atlas = t
+        return input, target, atlas
 
     def _forward_pass(self, input, target, weight=None):
         # forward pass

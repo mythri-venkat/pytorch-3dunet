@@ -140,9 +140,9 @@ def stitch_patches(outputs,boxes,shape,binterps,ncls=15):
     output = torch.argmax(output,1)
     return output
 
-def get_roi(output,atlas):
-    output = torch.argmax(output,1)
-    boxes = get_cropped_structure(output)
+def get_roi(output,atlas=None):
+#    output = torch.argmax(output,1)
+    boxes = get_cropped_structure(atlas)
     return boxes
 
 
