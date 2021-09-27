@@ -189,9 +189,9 @@ def get_cropped_structure(lbl,ncls=15,patch_shape=(48,48,48)):
             box[0],box[1],box[2],box[3],box[4],box[5] = 0,lbl_shape[0],0,lbl_shape[1],0,lbl_shape[2]
         center = [int((box[1] + box[0]) / 2), int((box[3] + box[2]) / 2), int((box[5] + box[4]) / 2)]
             
-        b1=(box[1]-box[0])
-        b2=(box[3]-box[2])
-        b3=(box[5]-box[4])
+        b1=getpwr(box[1]-box[0])
+        b2=getpwr(box[3]-box[2])
+        b3=getpwr(box[5]-box[4])
 
         if b1 == lbl_shape[0] and b2 == lbl_shape[1] and b3 ==lbl_shape[2]:
             center = [int(lbl_shape[0] / 2), int(lbl_shape[1] / 2), int(lbl_shape[2] / 2)]
@@ -225,8 +225,8 @@ def get_cropped_structure(lbl,ncls=15,patch_shape=(48,48,48)):
         # print("c",(box[1]-box[0],box[3]-box[2],box[5]-box[4]))
         
         boxes.append(box)
-    boxes.sort()
-    boxes = list(k for k,_ in itertools.groupby(boxes))
+    # boxes.sort()
+    # boxes = list(k for k,_ in itertools.groupby(boxes))
     # print(len(boxes))
     # print(boxes)
     return boxes

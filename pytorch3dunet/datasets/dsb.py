@@ -183,9 +183,6 @@ class NiiDataset(ConfigDataset):
         # assert os.path.isdir(masks_dir)
         self.mask_paths = self._load_files(root_dir,phase, '_seg_ana_1mm_center_cropped.nii.gz')
         self.masks = self._load_masks(self.mask_paths)
-        self.boxes=[self.get_cropped_structure(mask) for mask in self.masks]
-        # print([(box[1]-box[0],box[3]-box[2],box[5]-box[4]) for box in self.boxes[0]])
-        assert len(self.paths) == len(self.masks)
         # load label images transformer
         self.masks_transform = transformer.label_transform()
     # else:
@@ -203,90 +200,20 @@ class NiiDataset(ConfigDataset):
         if self.phase != 'test':
             mask = self.masks[idx]
             # icls = np.random.randint(0,15)
-            boxes=self.boxes[idx]
+            
             
             if self.expand_dims:
                 img = np.expand_dims(img, axis=0)
-            return self.raw_transform(img), self.masks_transform(mask),boxes,self.atlas
+            if self.atlas is not None:
+                return self.raw_transform(img), self.masks_transform(mask),self.atlas
+            else:
+                return self.raw_transform(img), self.masks_transform(mask)
         else:
             mask = self.masks[idx]
-            boxes=self.boxes[idx]
-            return self.raw_transform(img), self.masks_transform(mask),boxes, self.subjects[idx],self.atlas
-
-    def bbox2_3D(self,img,icls=0):
-
-        r = np.any(img == icls, axis=(1, 2))
-        c = np.any(img == icls, axis=(0, 2))
-        z = np.any(img == icls, axis=(0, 1))
-        rmin, rmax = np.where(r)[0][[0, -1]]
-        cmin, cmax = np.where(c)[0][[0, -1]]
-        zmin, zmax = np.where(z)[0][[0, -1]]
-        
-
-        return [rmin,rmax,cmin,cmax,zmin,zmax]
-
-    def getpwr(self,n):
-        pos=math.ceil(math.log(n,2))
-        pwr = math.pow(2,pos)
-        if pwr>self.patch_shape[0]:
-            return n
-        if pwr <= 4:
-            pwr =8
-    
-        if n<48 and (48-n)<(pwr-n):
-            pwr = 48
-        if n<40 and (40-n)<(pwr-n):
-            pwr = 40
-        if n<24 and (40-n)<(pwr-n):
-            pwr = 24
-        if n<20 and (20-n)<(pwr-n):
-            pwr = 20
-        
-        return pwr
-        
-
-    def get_cropped_structure(self,lbl,ncls=15):
-        boxes=[]
-        for icls in range(ncls):
-            box = self.bbox2_3D(lbl,icls)
-            if icls == 0:
-                box[0],box[1],box[2],box[3],box[4],box[5] = 0,self.patch_shape[0],0,self.patch_shape[1],0,self.patch_shape[2]
-            center = [int((box[1] + box[0]) / 2), int((box[3] + box[2]) / 2), int((box[5] + box[4]) / 2)]
-                
-            b1=self.getpwr(box[1]-box[0])
-            b2=self.getpwr(box[3]-box[2])
-            b3=self.getpwr(box[5]-box[4])
-            box[0]=center[0]-int(math.floor(b1/2))
-            box[1]=center[0]+int(math.floor(b1/2))
-            if box[0]<0:
-                box[0]=0
-                box[1]+=1
-            if box[1]>self.patch_shape[0]:
-                box[1]=self.patch_shape[0]
-                box[0]-=1
-            box[2]=center[1]-int(math.floor(b2/2))
-            box[3]=center[1]+int(math.floor(b2/2))
-            if box[2]<0:
-                box[2]=0
-                box[3]+=1
-            if box[3]>self.patch_shape[0]:
-                box[3]=self.patch_shape[0]
-                box[2]-=1
-            box[4]=center[2]-int(math.floor(b3/2))
-            box[5]=center[2]+int(math.floor(b3/2))
-            if box[4]<0:
-                box[4]=0
-                box[5]+=1
-            if box[5]>self.patch_shape[0]:
-                box[5]=self.patch_shape[0]
-                box[4]-=1
-            
-            boxes.append(box)
-        # img_cropped = img[int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
-        # lbl_cropped = lbl[int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
-        
-        # lbl_cropped = np.expand_dims(lbl_cropped, axis=0)
-        return boxes
+            if self.atlas is not None:
+                return self.raw_transform(img), self.masks_transform(mask),self.subjects[idx],self.atlas
+            else:
+                return self.raw_transform(img), self.masks_transform(mask),self.subjects[idx]
 
     def __len__(self):
         return len(self.images)

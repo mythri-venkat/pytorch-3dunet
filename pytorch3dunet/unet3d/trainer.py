@@ -26,7 +26,7 @@ def _create_trainer(config, model, optimizer, lr_scheduler, loss_criterion, eval
 
     resume = trainer_config.get('resume', None)
     pre_trained = trainer_config.get('pre_trained', None)
-
+    
     # get tensorboard formatter
     tensorboard_formatter = get_tensorboard_formatter(trainer_config.pop('tensorboard_formatter', None))
     # get sample plotter
@@ -165,6 +165,7 @@ class UNet3DTrainer:
         self.log_after_iters = log_after_iters
         self.validate_iters = validate_iters
         self.eval_score_higher_is_better = eval_score_higher_is_better
+        self.roi_patches = kwargs['roi_patches'] 
 
         # logger.info(model)
         logger.info(f'eval_score_higher_is_better: {eval_score_higher_is_better}')
@@ -211,6 +212,7 @@ class UNet3DTrainer:
                    validate_iters=state['validate_iters'],
                    skip_train_validation=state.get('skip_train_validation', False),
                    tensorboard_formatter=tensorboard_formatter,
+                   roi_patches = kwargs['roi_patches'],
                    sample_plotter=sample_plotter)
 
     @classmethod
@@ -221,7 +223,7 @@ class UNet3DTrainer:
                         validate_iters=None, num_iterations=1, num_epoch=0,
                         eval_score_higher_is_better=True, best_eval_score=None,
                         tensorboard_formatter=None, sample_plotter=None,
-                        skip_train_validation=False, **kwargs):
+                        skip_train_validation=False,**kwargs):
         logger.info(f"Logging pre-trained model from '{pre_trained}'...")
         utils.load_checkpoint(pre_trained, model, None)
         if 'checkpoint_dir' not in kwargs:
@@ -242,7 +244,8 @@ class UNet3DTrainer:
                    validate_iters=validate_iters,
                    tensorboard_formatter=tensorboard_formatter,
                    sample_plotter=sample_plotter,
-                   skip_train_validation=skip_train_validation)
+                   skip_train_validation=skip_train_validation,
+                   roi_patches=kwargs['roi_patches'])
 
     def fit(self):
         for _ in range(self.num_epoch, self.max_num_epochs):
@@ -255,60 +258,6 @@ class UNet3DTrainer:
 
             self.num_epoch += 1
         logger.info(f"Reached maximum number of epochs: {self.max_num_epochs}. Finishing training...")
-
-    def get_patches(self,input,target,box,i):
-    
-        input_cropped = input[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
-        target_cropped = target[:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
-        binterp = False
-        if (box[1]-box[0]) < 48:
-            binterp = True
-            input_cropped = F.interpolate(input_cropped,size=(48,48,48),mode='trilinear')
-            target_cropped = target_cropped.float().unsqueeze(1)/15
-            target_cropped = F.interpolate(target_cropped,size=(48,48,48),mode='nearest').squeeze(1)
-            target_cropped = (target_cropped*15).long()
-        # target_cropped[target_cropped != i] =0 
-        return input_cropped,target_cropped,binterp
-
-    def stitch_patches(self,outputs,bnoutputs,boxes,shape):
-        
-        b,w,h,d = shape
-        output = torch.zeros(b,15,w,h,d)
-        output = output.to(self.device)
-        for i,box in enumerate(boxes):
-            fs = outputs[i]*bnoutputs[i]
-            
-            # fs = fs.to(self.device)
-            c = output[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]<fs
-            d = torch.where(c)
-            output[:,:,box[0]+d[2],box[2]+d[3],box[4]+d[4]]=fs[c]
-
-        output = torch.argmax(output,1)
-        return output
-
-    def stitch_patches1(self,outputs,bnoutputs,boxes,shape,binterps):
-        
-        b,w,h,d = shape
-        output = torch.zeros(b,15,w,h,d)
-        output = output.to(self.device)
-        counter = torch.zeros(b,15,w,h,d)
-
-        counter = counter.to(self.device)
-        for i,box in enumerate(boxes):
-            fs = outputs[i]
-            # if (box[1]-box[0]) < 48:
-            if binterps[i]:
-                fs = F.interpolate(fs,size=(int(box[1]-box[0]),int(box[3]-box[2]),int(box[5]-box[4])),mode='trilinear')
-            output[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]+=fs
-            counter[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]+=1
-
-            # # fs = fs.to(self.device)
-            # c = output[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]<fs
-            # d = torch.where(c)
-            # output[:,:,box[0]+d[2],box[2]+d[3],box[4]+d[4]]=fs[c]
-        output =output/counter
-        output = torch.argmax(output,1)
-        return output
 
     def train(self):
         """Trains the model for 1 epoch.
@@ -326,29 +275,41 @@ class UNet3DTrainer:
             logger.info(f'Training iteration [{self.num_iterations}/{self.max_num_iterations}]. '
                         f'Epoch [{self.num_epoch}/{self.max_num_epochs - 1}]')
 
-            input, target, boxes = self._split_training_batch(t)
-            
-            weight=None
+            input, target, weight = self._split_training_batch(t)
+            output = self.model(input)
+
             outputs=[]
             binterps = []
-            idxshuffle = list(range(15))
+            if self.roi_patches:
+                boxes = utils.get_roi(output,None)
+                # idxshuffle = list(range(15))
 
-            random.shuffle(idxshuffle)
-            boxes=[boxes[i] for i in idxshuffle]
-            
-            for i in range(15):
-                # i=np.random.randint(0,15)
-                input_cropped,target_cropped,binterp = self.get_patches(input,target,boxes[i],i)
-                binterps.append(binterp)
-                output, loss = self._forward_pass(input_cropped, target_cropped, weight)
+                # random.shuffle(idxshuffle)
+                # boxes=[boxes[i] for i in idxshuffle]
                 
-                outputs.append(output)
-                train_losses.update(loss.item(), self._batch_size(input_cropped))
+                for i in range(len(boxes)):
+                    # i=np.random.randint(0,15)
+                    input_cropped,target_cropped,binterp = utils.get_patches(input,target,boxes[i],i)
+                    binterps.append(binterp)
+                    output, loss = self._forward_pass(input_cropped, target_cropped, weight)
+                    
+                    outputs.append(output)
+                    train_losses.update(loss.item(), self._batch_size(input_cropped))
+
+                    # compute gradients and update parameters
+                    self.optimizer.zero_grad()
+                    loss.backward()
+                    self.optimizer.step()
+            else:
+                loss = self.loss_criterion(output,target) if weight is None else self.loss_criterion(output,target,weight)
+                train_losses.update(loss.item(), self._batch_size(input))
 
                 # compute gradients and update parameters
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
+
+
 
             if self.num_iterations % self.validate_after_iters == 0:
                 # set the model in eval mode
@@ -375,20 +336,14 @@ class UNet3DTrainer:
                 # if model contains final_activation layer for normalizing logits apply it, otherwise both
                 # the evaluation metric as well as images in tensorboard will be incorrectly computed
                 if hasattr(self.model, 'final_activation') and self.model.final_activation is not None:
-                    bnoutputs=[]
-                    for i,output in enumerate(outputs):
-                        outputs[i]=self.model.final_activation(output)
-                        # bnoutputs.append(
-                        #     torch.argmax(outputs[i],1))
-                    # print(boxes[0])
-                    # print(bnoutputs[0].shape,target[:,int(boxes[0][0]):int(boxes[0][1]),int(boxes[0][2]):int(boxes[0][3]),int(boxes[0][4]):int(boxes[0][5])].shape)
-                    # output=torch.argmax(self.model.final_activation(output),1)
-                    
-
-
-
-                    
-                    output = self.stitch_patches1(outputs,bnoutputs,boxes,target.shape,binterps)
+                    if self.roi_patches:
+                        bnoutputs=[]
+                        for i,output in enumerate(outputs):
+                            outputs[i]=self.model.final_activation(output)
+                       
+                        output = utils.stitch_patches(outputs,bnoutputs,boxes,target.shape,binterps)
+                    else:
+                        output = torch.argmax(self.model.final_activation(output),1)
                 # compute eval criterion
                 if not self.skip_train_validation:
                     # eval_score = torch.mean(torch.Tensor([self.eval_criterion(op, target[:,int(boxes[i][0]):int(boxes[i][1]),int(boxes[i][2]):int(boxes[i][3]),int(boxes[i][4]):int(boxes[i][5])]) for i,op in enumerate(bnoutputs)]))
@@ -439,28 +394,39 @@ class UNet3DTrainer:
             for i, t in enumerate(self.loaders['val']):
                 logger.info(f'Validation iteration {i}')
 
-                input, target, boxes = self._split_training_batch(t)
-                weight=None
-                outputs=[]
-                binterps = []
-                idxshuffle = list(range(15))
-                random.shuffle(idxshuffle)
-                boxes=[boxes[i] for i in idxshuffle]
+                input, target,weight = self._split_training_batch(t)
                 
-                for i in range(15):
-                    input_cropped,target_cropped,binterp = self.get_patches(input,target,boxes[i],i)
-                    binterps.append(binterp)
-                    output, loss = self._forward_pass(input_cropped, target_cropped, weight)
-                    outputs.append(output)
-                    val_losses.update(loss.item(), self._batch_size(input_cropped))
+                output = self.model(input)
+                if self.roi_patches:
+                    outputs=[]
+                    binterps = []
+                    boxes = utils.get_roi(output,None)                    
+                    for i in range(len(boxes)):
+                        input_cropped,target_cropped,binterp = utils.get_patches(input,target,boxes[i],i)
+                        binterps.append(binterp)
+                        output, loss = self._forward_pass(input_cropped, target_cropped, weight)
+                        outputs.append(output)
+                        val_losses.update(loss.item(), self._batch_size(input_cropped))
+                else:
+                    
+                    if weight is None:
+                        loss = self.loss_criterion(output, target)
+                    else:
+                        loss = self.loss_criterion(output, target, weight)
+
+                    val_losses.update(loss.item(), self._batch_size(input))
+
 
                 # if model contains final_activation layer for normalizing logits apply it, otherwise
                 # the evaluation metric will be incorrectly computed
                 if hasattr(self.model, 'final_activation') and self.model.final_activation is not None:
-                    bnoutputs=[]
-                    for i,output in enumerate(outputs):
-                        outputs[i] = self.model.final_activation(output)
-                    output = self.stitch_patches1(outputs,bnoutputs,boxes,target.shape,binterps)
+                    if self.roi_patches:
+                        bnoutputs=[]
+                        for i,output in enumerate(outputs):
+                            outputs[i] = self.model.final_activation(output)
+                        output = utils.stitch_patches(outputs,bnoutputs,boxes,target.shape,binterps)
+                    else:
+                        output = torch.argmax(self.model.final_activation(output),1)
 
                 # if i % 100 == 0:
                 #     self._log_images(input, target, output, 'val_')
@@ -738,6 +704,7 @@ class CascadedUNet3DTrainer:
         self.log_after_iters = log_after_iters
         self.validate_iters = validate_iters
         self.eval_score_higher_is_better = eval_score_higher_is_better
+        self.roi_patches = kwargs['roi_patches'] if 'roi_patches' in kwargs.keys() else None
 
         # logger.info(model)
         logger.info(f'eval_score_higher_is_better: {eval_score_higher_is_better}')
@@ -796,7 +763,8 @@ class CascadedUNet3DTrainer:
                         tensorboard_formatter=None, sample_plotter=None,
                         skip_train_validation=False, **kwargs):
         logger.info(f"Logging pre-trained model from '{pre_trained}'...")
-        utils.load_checkpoint(pre_trained, model, None)
+        utils.load_checkpoint(pre_trained, model0, None)
+        # utils.load_checkpoint(pre_trained, model, None)
         if 'checkpoint_dir' not in kwargs:
             checkpoint_dir = os.path.split(pre_trained)[0]
         else:
@@ -815,7 +783,8 @@ class CascadedUNet3DTrainer:
                    validate_iters=validate_iters,
                    tensorboard_formatter=tensorboard_formatter,
                    sample_plotter=sample_plotter,
-                   skip_train_validation=skip_train_validation)
+                   skip_train_validation=skip_train_validation,
+                   roi_patches=kwargs['roi_patches'])
 
     def fit(self):
         for _ in range(self.num_epoch, self.max_num_epochs):
@@ -847,10 +816,12 @@ class CascadedUNet3DTrainer:
             logger.info(f'Training iteration [{self.num_iterations}/{self.max_num_iterations}]. '
                         f'Epoch [{self.num_epoch}/{self.max_num_epochs - 1}]')
 
-            input, target, boxes,atlas = self._split_training_batch(t)
+            
+            input, target,weight,atlas = self._split_training_batch(t)
             
 
             output0 = self.model0(input)
+            
             boxes = utils.get_roi(output0,atlas)
             weight=None
             
@@ -867,7 +838,10 @@ class CascadedUNet3DTrainer:
                 binterps.append(binterp)
                 output = self.model(input_cropped)
                 outputs.append(output)
-                loss = self.loss_criterion(output0,target,output, target_cropped)
+                if type(self.loss_criterion).__name__ == 'ROILoss':
+                    loss = self.loss_criterion(output0,target,output, target_cropped) 
+                else:
+                    loss = self.loss_criterion(output,target_cropped)
                     
                     
                 train_losses.update(loss.item(), self._batch_size(input_cropped))
@@ -957,8 +931,8 @@ class CascadedUNet3DTrainer:
         with torch.no_grad():
             for i, t in enumerate(self.loaders['val']):
                 logger.info(f'Validation iteration {i}')
-
                 input, target, boxes,atlas = self._split_training_batch(t)
+
                 weight=None
                 output0=self.model0(input)
                 boxes = utils.get_roi(output0,atlas)
@@ -972,7 +946,11 @@ class CascadedUNet3DTrainer:
                     input_cropped,target_cropped,binterp = utils.get_patches(input,target,boxes[k],k)
                     binterps.append(binterp)
                     output = self.model(input_cropped)
-                    loss = self.loss_criterion(output0,target,output,target_cropped)
+                    # loss = self.loss_criterion(output0,target,output,target_cropped)
+                    if type(self.loss_criterion).__name__ == 'ROILoss':
+                        loss = self.loss_criterion(output0,target,output, target_cropped) 
+                    else:
+                        loss = self.loss_criterion(output,target_cropped)
                     outputs.append(output)
                     val_losses.update(loss.item(), self._batch_size(input_cropped))
 
@@ -1010,11 +988,15 @@ class CascadedUNet3DTrainer:
 
         t = _move_to_device(t)
         weight = None
+        atlas = None
         if len(t) == 2:
             input, target = t
+        elif len(t) == 3:
+            input, target, weight = t
         else:
-            input, target, weight,mask = t
-        return input, target, weight,mask
+            input,target,weight,atlas = t
+            
+        return input, target, weight,atlas
 
     def _forward_pass(self, input, target, weight=None):
         # forward pass

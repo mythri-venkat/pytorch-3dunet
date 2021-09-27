@@ -43,17 +43,8 @@ class DiceCoefficientFull:
     def __call__(self, input, target):
         # Average across channels in order to get the final score
         
-        target = target.unsqueeze(1)
-        input = input.unsqueeze(1)
-        b,_,h,w,d = target.shape
-        encoded_target = torch.empty(b,15,h,w,d)
-        torch.zeros_like(encoded_target)
-        encoded_target = encoded_target.to(target.device)
-        encoded_target.scatter_(1, target, 1)
-        encoded_input = torch.empty(b,15,h,w,d)
-        torch.zeros_like(encoded_input)
-        encoded_input = encoded_input.to(target.device)
-        encoded_input.scatter_(1, input, 1)
+        encoded_input = expand_as_one_hot(input,C=15) 
+        encoded_target = expand_as_one_hot(target,C=15) 
         x=compute_per_channel_dice(encoded_input, encoded_target, epsilon=self.epsilon)
         # x=torch.mean(x[1:])
         return x

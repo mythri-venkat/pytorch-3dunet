@@ -321,24 +321,30 @@ class NiiPredictor(_AbstractPredictor):
         # Run predictions on the entire input dataset
         with torch.no_grad():
             eval_scores = []
-            for batch,target,boxes, subject,atlas in test_loader:
+            for batch,target, subject in test_loader:
                 # send batch to device
                 batch = batch.to(device)
                 target = target.to(device)
+
+                output =  self.model(batch)
+
                 predictions=[]
                 bnoutputs=[]
                 binterps=[]
-                # eval_score=[]
-                for i in range(15):
-                    input_cropped,target_cropped,binterp = self.get_patches(batch,target,boxes[i],i)
-                    binterps.append(binterp)
-                    prediction = self.model(input_cropped)
-                    predictions.append(prediction)
-                    # bnoutputs.append(prediction[:,i,...] > 0.5)
-                    # eval_score.append(self.eval_criterion(bnoutputs[i], target_cropped))
+                if self.roi_patches:
+                    boxes= utils.get_roi(output)
+                    for i in range(len(boxes)):
+                        input_cropped,target_cropped,binterp = utils.get_patches(batch,target,boxes[i],i)
+                        binterps.append(binterp)
+                        prediction = self.model(input_cropped)
+                        predictions.append(prediction)
+                        # bnoutputs.append(prediction[:,i,...] > 0.5)
+                        # eval_score.append(self.eval_criterion(bnoutputs[i], target_cropped))
 
                 
-                prediction = self.stitch_patches1(predictions,bnoutputs,boxes,batch.shape,binterps)
+                    prediction = utils.stitch_patches(predictions,bnoutputs,boxes,batch.shape,binterps)
+                else:
+                    prediction = torch.argmax(prediction)
                 
                 eval_score = self.eval_criterion(prediction,target)
                 eval_scores.append(eval_score.cpu().numpy())
@@ -429,7 +435,8 @@ class CascadedNiiPredictor(_AbstractPredictor):
         # Run predictions on the entire input dataset
         with torch.no_grad():
             eval_scores = []
-            for batch,target,boxes, subject,atlas in test_loader:
+            for it,t in test_loader:
+                input, target, boxes,atlas = self._split_training_batch(t)
                 # send batch to device
                 batch = batch.to(device)
                 target = target.to(device)
@@ -459,6 +466,25 @@ class CascadedNiiPredictor(_AbstractPredictor):
                 logger.info(f'Saving predictions to: {output_file}')
             avg12,avg14=self._evaluate_save_results(eval_scores)
             logger.info(f'Results: {avg12},{avg14}')
+
+    def _split_training_batch(self, t):
+        def _move_to_device(input):
+            if isinstance(input, tuple) or isinstance(input, list):
+                return tuple([_move_to_device(x) for x in input])
+            else:
+                return input.to(self.device)
+
+        t = _move_to_device(t)
+        weight = None
+        atlas = None
+        if len(t) == 2:
+            input, target = t
+        elif len(t) == 3:
+            input, target, weight = t
+        else:
+            input,target,weight,atlas = t
+            
+        return input, target, weight,atlas
 
     def _evaluate_save_results(self,eval_scores):
         

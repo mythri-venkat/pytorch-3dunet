@@ -270,6 +270,29 @@ class ROILoss(nn.Module):
         else:
             return l1
 
+class ROILossDC(nn.Module):
+    def __init__(self,weight,ignore_index,normalization):
+        super(ROILossDC, self).__init__()
+        self.ce1 = nn.CrossEntropyLoss(weight=weight, ignore_index=ignore_index)
+        self.ce2 = nn.CrossEntropyLoss(weight=None, ignore_index=ignore_index)
+        self.dsc1 = DiceLoss(weight=weight,normalization=normalization)
+        self.dsc2 = DiceLoss(weight=None,normalization=normalization)
+    def __call__(self, pred,target,pred_cropped,target_cropped,crop=True):
+        l1 = self.ce1(pred,target) 
+        target= expand_as_one_hot(target,C=pred.shape[1])
+        ldsc1 = self.dsc1(pred,target)
+        
+
+        if crop:
+            l2 = self.ce2(pred_cropped,target_cropped)
+            target_cropped= expand_as_one_hot(target_cropped,C=pred_cropped.shape[1])
+            ldsc2 = self.dsc1(pred_cropped,target_cropped)
+            
+            ldsc2 = ldsc2 if not np.isnan(ldsc2.detach().cpu().numpy()) else 1
+            return l1+l2+ldsc1+ldsc2
+        else:
+            return l1+ldsc1
+
 def flatten(tensor):
     """Flattens a given tensor such that the channel axis is first.
     The shapes are transformed as follows:
@@ -359,5 +382,10 @@ def _create_loss(name, loss_config, weight, ignore_index, pos_weight):
         if ignore_index is None:
             ignore_index = -100  # use the default 'ignore_index' as defined in the CrossEntropyLoss
         return ROILoss(weight=weight,ignore_index=ignore_index)
+    elif name == "ROILossDC":
+        normalization = loss_config.get('normalization', 'sigmoid')
+        if ignore_index is None:
+            ignore_index = -100  # use the default 'ignore_index' as defined in the CrossEntropyLoss
+        return ROILossDC(weight=weight,ignore_index=ignore_index,normalization=normalization)
     else:
         raise RuntimeError(f"Unsupported loss function: '{name}'")
