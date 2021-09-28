@@ -491,13 +491,18 @@ class UNet3DTrainer:
         # see: https://discuss.pytorch.org/t/solved-keyerror-unexpected-key-module-encoder-embedding-weight-in-state-dict/1686/20
         if isinstance(self.model, nn.DataParallel):
             state_dict = self.model.module.state_dict()
+            state_dict0 = self.model0.module.state_dict()
+
         else:
             state_dict = self.model.state_dict()
+            state_dict0 = self.model0.state_dict()
+
 
         utils.save_checkpoint({
             'epoch': self.num_epoch + 1,
             'num_iterations': self.num_iterations,
             'model_state_dict': state_dict,
+            'model0_state_dict': state_dict0,
             'best_eval_score': self.best_eval_score,
             'eval_score_higher_is_better': self.eval_score_higher_is_better,
             'optimizer_state_dict': self.optimizer.state_dict(),

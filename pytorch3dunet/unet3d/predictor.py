@@ -238,6 +238,7 @@ class NiiPredictor(_AbstractPredictor):
         super().__init__(model, output_dir, config, **kwargs)
         self.device = self.config['device']
         self.eval_criterion = get_evaluation_metric(self.config)
+        self.roi_patches=kwargs['roi_patches'] if 'roi_patches' in kwargs else False
 
     def get_patches(self,input,target,box,i):
         input_cropped = input[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
@@ -342,7 +343,7 @@ class NiiPredictor(_AbstractPredictor):
                         # eval_score.append(self.eval_criterion(bnoutputs[i], target_cropped))
 
                 
-                    prediction = utils.stitch_patches(predictions,bnoutputs,boxes,batch.shape,binterps)
+                    prediction = utils.stitch_patches(predictions,boxes,batch.shape,binterps)
                 else:
                     prediction = torch.argmax(prediction)
                 

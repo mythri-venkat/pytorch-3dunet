@@ -19,7 +19,10 @@ def _get_predictor(model0,model, output_dir, config):
     m = importlib.import_module('pytorch3dunet.unet3d.predictor')
     predictor_class = getattr(m, class_name)
 
-    return predictor_class(model0,model, output_dir, config, **predictor_config)
+    if 'Cascaded' in class_name:
+        return predictor_class(model0,model, output_dir, config, **predictor_config)
+    else:
+        return predictor_class(model, output_dir, config, **predictor_config)
 
 
 def main():
@@ -28,23 +31,28 @@ def main():
 
     # Create the model
     model = get_model(config['model'])
-    model0 = get_model(config['model'])
+    model0=None
+    if 'model0' in config.keys():
+        model0 = get_model(config['model0'])
 
     # Load model state
     model_path = config['model_path']
     logger.info(f'Loading model from {model_path}...')
     utils.load_checkpoint(model_path, model)
-    utils.load_checkpoint(model_path, model0)
+    if 'model0' in config.keys():
+        utils.load_checkpoint(model_path, model0,model_key='model0_state_dict')
     # use DataParallel if more than 1 GPU available
     device = config['device']
     if torch.cuda.device_count() > 1 and not device.type == 'cpu':
         model = nn.DataParallel(model)
-        model0 = nn.DataParallel(model0)
+        if 'model0' in config.keys():
+            model0 = nn.DataParallel(model0)
         logger.info(f'Using {torch.cuda.device_count()} GPUs for prediction')
 
     logger.info(f"Sending the model to '{device}'")
     model = model.to(device)
-    model0 = model0.to(device)
+    if 'model0' in config.keys():
+        model0 = model0.to(device)
 
     output_dir = config['loaders'].get('output_dir', None)
     if output_dir is not None:
