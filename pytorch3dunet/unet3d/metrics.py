@@ -39,12 +39,13 @@ class DiceCoefficientFull:
 
     def __init__(self, epsilon=1e-6, **kwargs):
         self.epsilon = epsilon
+        self.num_class = kwargs['num_class'] if 'num_class' in kwargs.keys() else 15
 
     def __call__(self, input, target):
         # Average across channels in order to get the final score
         
-        encoded_input = expand_as_one_hot(input,C=15) 
-        encoded_target = expand_as_one_hot(target,C=15) 
+        encoded_input = expand_as_one_hot(input,C=self.num_class) 
+        encoded_target = expand_as_one_hot(target,C=self.num_class) 
         x=compute_per_channel_dice(encoded_input, encoded_target, epsilon=self.epsilon)
         # x=torch.mean(x[1:])
         return x

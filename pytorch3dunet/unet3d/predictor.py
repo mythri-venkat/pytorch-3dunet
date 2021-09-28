@@ -345,6 +345,7 @@ class NiiPredictor(_AbstractPredictor):
                 
                     prediction = utils.stitch_patches(predictions,boxes,batch.shape,binterps)
                 else:
+                    prediction = self.model(batch)
                     prediction = torch.argmax(prediction)
                 
                 eval_score = self.eval_criterion(prediction,target)

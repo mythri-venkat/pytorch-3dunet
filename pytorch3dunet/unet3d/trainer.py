@@ -225,7 +225,7 @@ class UNet3DTrainer:
                         tensorboard_formatter=None, sample_plotter=None,
                         skip_train_validation=False,**kwargs):
         logger.info(f"Logging pre-trained model from '{pre_trained}'...")
-        utils.load_checkpoint(pre_trained, model, None)
+        utils.load_pretrained_checkpoint(pre_trained, model, None)
         if 'checkpoint_dir' not in kwargs:
             checkpoint_dir = os.path.split(pre_trained)[0]
         else:
@@ -302,7 +302,8 @@ class UNet3DTrainer:
                     loss.backward()
                     self.optimizer.step()
             else:
-                loss = self.loss_criterion(output,target) if weight is None else self.loss_criterion(output,target,weight)
+                output = self.model(input)
+                loss = self.loss_criterion(output,target)
                 train_losses.update(loss.item(), self._batch_size(input))
 
                 # compute gradients and update parameters
@@ -345,6 +346,7 @@ class UNet3DTrainer:
                         output = utils.stitch_patches(outputs,boxes,input.shape,binterps)
                     else:
                         output = torch.argmax(self.model.final_activation(output),1)
+                        
                 # compute eval criterion
                 if not self.skip_train_validation:
                     # eval_score = torch.mean(torch.Tensor([self.eval_criterion(op, target[:,int(boxes[i][0]):int(boxes[i][1]),int(boxes[i][2]):int(boxes[i][3]),int(boxes[i][4]):int(boxes[i][5])]) for i,op in enumerate(bnoutputs)]))
@@ -410,7 +412,7 @@ class UNet3DTrainer:
                         outputs.append(output)
                         val_losses.update(loss.item(), self._batch_size(input_cropped))
                 else:
-                    
+                    output = self.model(input)
                     if weight is None:
                         loss = self.loss_criterion(output, target)
                     else:
@@ -491,18 +493,17 @@ class UNet3DTrainer:
         # see: https://discuss.pytorch.org/t/solved-keyerror-unexpected-key-module-encoder-embedding-weight-in-state-dict/1686/20
         if isinstance(self.model, nn.DataParallel):
             state_dict = self.model.module.state_dict()
-            state_dict0 = self.model0.module.state_dict()
+            
 
         else:
             state_dict = self.model.state_dict()
-            state_dict0 = self.model0.state_dict()
+            
 
 
         utils.save_checkpoint({
             'epoch': self.num_epoch + 1,
             'num_iterations': self.num_iterations,
             'model_state_dict': state_dict,
-            'model0_state_dict': state_dict0,
             'best_eval_score': self.best_eval_score,
             'eval_score_higher_is_better': self.eval_score_higher_is_better,
             'optimizer_state_dict': self.optimizer.state_dict(),
@@ -845,7 +846,7 @@ class CascadedUNet3DTrainer:
                 binterps.append(binterp)
                 output = self.model(input_cropped)
                 outputs.append(output)
-                if type(self.loss_criterion).__name__ == 'ROILoss':
+                if 'ROI' in type(self.loss_criterion).__name__ :
                     loss = self.loss_criterion(output0,target,output, target_cropped) 
                 else:
                     loss = self.loss_criterion(output,target_cropped)
@@ -954,7 +955,7 @@ class CascadedUNet3DTrainer:
                     binterps.append(binterp)
                     output = self.model(input_cropped)
                     # loss = self.loss_criterion(output0,target,output,target_cropped)
-                    if type(self.loss_criterion).__name__ == 'ROILoss':
+                    if 'ROI' in type(self.loss_criterion).__name__ :
                         loss = self.loss_criterion(output0,target,output, target_cropped) 
                     else:
                         loss = self.loss_criterion(output,target_cropped)
@@ -1034,13 +1035,16 @@ class CascadedUNet3DTrainer:
         # see: https://discuss.pytorch.org/t/solved-keyerror-unexpected-key-module-encoder-embedding-weight-in-state-dict/1686/20
         if isinstance(self.model, nn.DataParallel):
             state_dict = self.model.module.state_dict()
+            state_dict0 = self.model0.module.state_dict()
         else:
             state_dict = self.model.state_dict()
+            state_dict0 = self.model0.state_dict()
 
         utils.save_checkpoint({
             'epoch': self.num_epoch + 1,
             'num_iterations': self.num_iterations,
             'model_state_dict': state_dict,
+            'model0_state_dict': state_dict0,
             'best_eval_score': self.best_eval_score,
             'eval_score_higher_is_better': self.eval_score_higher_is_better,
             'optimizer_state_dict': self.optimizer.state_dict(),

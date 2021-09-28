@@ -91,7 +91,7 @@ def load_pretrained_checkpoint(checkpoint_path, model, optimizer=None,
     state = torch.load(checkpoint_path, map_location='cpu')
     del state[model_key]['final_conv.weight']
     del state[model_key]['final_conv.bias']
-    model.load_state_dict(state[model_key])
+    model.load_state_dict(state[model_key],strict=False)
 
     if optimizer is not None:
         optimizer.load_state_dict(state[optimizer_key])
