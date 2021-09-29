@@ -240,60 +240,6 @@ class NiiPredictor(_AbstractPredictor):
         self.eval_criterion = get_evaluation_metric(self.config)
         self.roi_patches=kwargs['roi_patches'] if 'roi_patches' in kwargs else False
 
-    def get_patches(self,input,target,box,i):
-        input_cropped = input[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
-        target_cropped = target[:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
-        # target_cropped =  (target_cropped == i).long().to(self.device)
-        binterp = False
-        if (box[1]-box[0]) < 48:
-            binterp = True
-            input_cropped = F.interpolate(input_cropped,size=(48,48,48),mode='trilinear')
-            target_cropped = target_cropped.float().unsqueeze(1)/15
-            target_cropped = F.interpolate(target_cropped,size=(48,48,48),mode='nearest').squeeze(1)
-            target_cropped = (target_cropped*15).long()
-        # target_cropped[target_cropped != i] =0 
-        return input_cropped,target_cropped,binterp
-        
-
-    def stitch_patches(self,outputs,bnoutputs,boxes,shape):
-        
-        b,c,w,h,d = shape
-        output = torch.zeros(b,15,w,h,d)
-        output = output.to(self.device)
-        for i,box in enumerate(boxes):
-            fs = outputs[i]*bnoutputs[i]
-            
-            # fs = fs.to(self.device)
-            c = output[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]<fs
-            d = torch.where(c)
-            output[:,:,box[0]+d[2],box[2]+d[3],box[4]+d[4]]=fs[c]
-
-        output = torch.argmax(output,1)
-        return output
-
-    def stitch_patches1(self,outputs,bnoutputs,boxes,shape,binterps):
-        
-        b,c,w,h,d = shape
-        output = torch.zeros(b,15,w,h,d)
-        output = output.to(self.device)
-        counter = torch.zeros(b,15,w,h,d)
-
-        counter = counter.to(self.device)
-        for i,box in enumerate(boxes):
-            fs = outputs[i]
-            # if (box[1]-box[0]) < 48:
-            if binterps[i]:
-                fs = F.interpolate(fs,size=(int(box[1]-box[0]),int(box[3]-box[2]),int(box[5]-box[4])),mode='trilinear')
-            output[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]+=fs
-            counter[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]+=1
-
-            # # fs = fs.to(self.device)
-            # c = output[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]<fs
-            # d = torch.where(c)
-            # output[:,:,box[0]+d[2],box[2]+d[3],box[4]+d[4]]=fs[c]
-        output =output/counter
-        output = torch.argmax(output,1)
-        return output
 
     def __call__(self, test_loader):
         # assert isinstance(test_loader.dataset, AbstractHDF5Dataset)
@@ -322,7 +268,8 @@ class NiiPredictor(_AbstractPredictor):
         # Run predictions on the entire input dataset
         with torch.no_grad():
             eval_scores = []
-            for batch,target, subject,atlas in test_loader:
+            for t in test_loader:
+                batch,target, subject,atlas=self._split_training_batch(t)  
                 # send batch to device
                 batch = batch.to(device)
                 target = target.to(device)
@@ -356,6 +303,25 @@ class NiiPredictor(_AbstractPredictor):
                 logger.info(f'Saving predictions to: {output_file}')
             avg12,avg14=self._evaluate_save_results(eval_scores)
             logger.info(f'Results: {avg12},{avg14}')
+
+    def _split_training_batch(self, t):
+        def _move_to_device(input):
+            if isinstance(input, tuple) or isinstance(input, list):
+                return tuple([_move_to_device(x) if not type(x) is str else x for x in input])
+            else:
+                return input.to(self.device)
+
+        t = _move_to_device(t)
+        subjects = None
+        atlas = None
+        if len(t) == 2:
+            input, target = t
+        elif len(t) == 3:
+            input, target, subjects = t
+        else:
+            input,target,subjects,atlas = t
+            
+        return input, target, subjects,atlas
 
     def _evaluate_save_results(self,eval_scores):
         
