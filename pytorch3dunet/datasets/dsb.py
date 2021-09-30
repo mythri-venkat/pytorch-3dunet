@@ -9,7 +9,7 @@ import json
 import math
 
 from pytorch3dunet.augment import transforms
-from pytorch3dunet.datasets.utils import ConfigDataset, calculate_stats, sample_instances
+from pytorch3dunet.datasets.utils import get_slice_builder,ConfigDataset, calculate_stats, sample_instances
 from pytorch3dunet.unet3d.utils import get_logger
 
 logger = get_logger('Dataset')
@@ -143,7 +143,7 @@ class DSB2018Dataset(ConfigDataset):
     
 class NiiDataset(ConfigDataset):
     def __init__(self, root_dir, phase, transformer_config, mirror_padding=(0, 32, 32), expand_dims=True,
-                 instance_ratio=None, random_seed=0,patch_shape=(80,80,80),atlas_path=None,suffix_raw='_ana_strip_1mm_center_cropped.nii.gz',suffix_label='_seg_ana_1mm_center_cropped.nii.gz'):
+                 instance_ratio=None, random_seed=0,atlas_path=None,suffix_raw='_ana_strip_1mm_center_cropped.nii.gz',suffix_label='_seg_ana_1mm_center_cropped.nii.gz',slice_builder_config=None):
         # assert os.path.isdir(root_dir), f'{root_dir} is not a directory'
         assert phase in ['train', 'val', 'test']
 
@@ -175,7 +175,7 @@ class NiiDataset(ConfigDataset):
         self.raw_transform = transformer.raw_transform()
         
         self.raws = [np.array(self.images[0].shape)]
-        self.patch_shape = patch_shape
+        
         # print(self.raws,self.raws[0])
         # if phase != 'test':
             # load labeled images
@@ -189,16 +189,25 @@ class NiiDataset(ConfigDataset):
         # self.masks = None
         # self.masks_transform = None
         self.subjects = self._load_subjects(root_dir,phase)
+        slice_builder = get_slice_builder(self.images, self.masks, None, slice_builder_config)
+        self.raw_slices = slice_builder.raw_slices
+        self.label_slices = slice_builder.label_slices
+        self.weight_slices = slice_builder.weight_slices
+
+        self.patch_count = len(self.raw_slices)
+        self.subj_count = len(self.images)
+        logger.info(f'Number of patches: {self.patch_count}')
 
 
 
     def __getitem__(self, idx):
         if idx >= len(self):
             raise StopIteration
-
-        img =self.images[idx]
+        idx_sub = int(math.floor(idx/self.patch_count))
+        idx_slice = idx%self.subj_count
+        img =self.images[idx_sub][self.raw_slices[idx_slice]]
         if self.phase != 'test':
-            mask = self.masks[idx]
+            mask = self.masks[idx_sub][self.label_slices[idx_slice]]
             # icls = np.random.randint(0,15)
             
             
@@ -209,14 +218,14 @@ class NiiDataset(ConfigDataset):
             else:
                 return self.raw_transform(img), self.masks_transform(mask)
         else:
-            mask = self.masks[idx]
+            mask = self.masks[idx_sub][self.label_slices[idx_slice]]
             if self.atlas is not None:
-                return self.raw_transform(img), self.masks_transform(mask),self.subjects[idx],self.atlas
+                return self.raw_transform(img), self.masks_transform(mask),self.subjects[idx_sub],self.atlas
             else:
-                return self.raw_transform(img), self.masks_transform(mask),self.subjects[idx]
+                return self.raw_transform(img), self.masks_transform(mask),self.subjects[idx_sub]
 
     def __len__(self):
-        return len(self.images)
+        return self.patch_count*self.subj_count
 
     @classmethod
     def prediction_collate(cls, batch):
@@ -230,7 +239,7 @@ class NiiDataset(ConfigDataset):
         # load files to process
         file_paths = phase_config['file_paths']
         atlas_path = phase_config.get('atlas_path',None)
-        patch_shape = phase_config['slice_builder']['patch_shape']
+        slice_builder_config = phase_config['slice_builder']
         suffix_raw = dataset_config.get('suffix_raw','_ana_strip_1mm_center_cropped.nii.gz')
         suffix_label = dataset_config.get('suffix_label','_seg_ana_1mm_center_cropped.nii.gz')
 
@@ -239,7 +248,7 @@ class NiiDataset(ConfigDataset):
         expand_dims = dataset_config.get('expand_dims', True)
         instance_ratio = phase_config.get('instance_ratio', None)
         random_seed = phase_config.get('random_seed', 0)
-        return [cls(file_paths[0], phase, transformer_config, mirror_padding, expand_dims, instance_ratio, random_seed,patch_shape,atlas_path,suffix_raw,suffix_label)]
+        return [cls(file_paths[0], phase, transformer_config, mirror_padding, expand_dims, instance_ratio, random_seed,atlas_path,suffix_raw,suffix_label,slice_builder_config)]
 
     @staticmethod
     def _load_nii(path,expand_dims):
