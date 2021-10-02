@@ -71,8 +71,10 @@ def create_conv(in_channels, out_channels, kernel_size, order, num_groups, paddi
                 modules.append(('instancenorm', nn.InstanceNorm3d(in_channels)))
             else:
                 modules.append(('instancenorm', nn.InstanceNorm3d(out_channels)))
+        elif char =='d':
+            modules.append(('dropout',nn.Dropout(0.3)))
         else:
-            raise ValueError(f"Unsupported layer type '{char}'. MUST be one of ['b', 'g', 'r', 'l', 'e', 'c','i']")
+            raise ValueError(f"Unsupported layer type '{char}'. MUST be one of ['b', 'g', 'r', 'l', 'e', 'c','i','d']")
 
     return modules
 
@@ -127,6 +129,8 @@ class DoubleConv(nn.Sequential):
 
     def __init__(self, in_channels, out_channels, encoder, kernel_size=3, order='gcr', num_groups=8, padding=1):
         super(DoubleConv, self).__init__()
+        self.bdropout = 'd'  in order
+        order=order.replace('d','')       
         if encoder:
             # we're in the encoder path
             conv1_in_channels = in_channels
@@ -145,7 +149,7 @@ class DoubleConv(nn.Sequential):
                                    padding=padding))
         # conv2
         self.add_module('SingleConv2',
-                        SingleConv(conv2_in_channels, conv2_out_channels, kernel_size, order, num_groups,
+                        SingleConv(conv2_in_channels, conv2_out_channels, kernel_size, order+('d' if self.bdropout else ''), num_groups,
                                    padding=padding))
 
 

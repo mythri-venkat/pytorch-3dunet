@@ -999,7 +999,7 @@ class CascadedUNet3DTrainer:
         atlas = None
         if len(t) == 2:
             input, target = t
-        else len(t) == 3:
+        else: 
             input, target, atlas = t
             
         return input, target, weight,atlas

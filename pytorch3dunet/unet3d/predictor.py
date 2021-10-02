@@ -344,8 +344,7 @@ class NiiPredictor(_AbstractPredictor):
 
 
     def _save_results(self,prediction,subject):
-        
-        prediction = prediction.cpu().numpy()
+        prediction = prediction.squeeze(0).cpu().numpy().astype(np.int32)
         outfile = self.output_dir+subject[0]+'.nii.gz'
         img = nib.Nifti1Image(prediction,np.eye(4))
         nib.save(img,outfile)
