@@ -170,12 +170,12 @@ def getpwr(n,lbl_shape=(80,80,80)):
     pwr = 8
     for i in range(2,int(lbl_shape[0]/8)):
         npwr = pwr*i
-        if n < pwr:
+        if n <= pwr:
             return pwr
-        elif n < npwr:
+        elif n <= npwr:
             return npwr
         else:
-            return npwr
+            continue
 
     
 
