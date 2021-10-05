@@ -298,6 +298,7 @@ class NiiPredictor(_AbstractPredictor):
                 eval_score = self.eval_criterion(prediction,target)
                 eval_scores.append(eval_score.cpu().numpy())
                 output_file=self._save_results(prediction,subject)
+                print(np.mean(eval_score.cpu().numpy()[1:]))
                 
                 # save results
                 logger.info(f'Saving predictions to: {output_file}')

@@ -11,7 +11,7 @@ from pytorch3dunet.datasets.utils import get_train_loaders
 from pytorch3dunet.unet3d.losses import get_loss_criterion
 from pytorch3dunet.unet3d.metrics import get_evaluation_metric
 from pytorch3dunet.unet3d.model import get_model
-from pytorch3dunet.unet3d.utils import get_logger, get_tensorboard_formatter, create_sample_plotter, create_optimizer, \
+from pytorch3dunet.unet3d.utils import EarlyStopping, get_logger, get_tensorboard_formatter, create_sample_plotter, create_optimizer, \
     create_lr_scheduler, get_number_of_learnable_parameters
 from . import utils
 import torch.nn.functional as F
@@ -205,7 +205,7 @@ class UNet3DTrainer:
                    best_eval_score=state['best_eval_score'],
                    num_iterations=state['num_iterations'],
                    num_epoch=state['epoch'],
-                   max_num_epochs=state['max_num_epochs'],
+                   max_num_epochs=kwargs['max_num_epochs'],
                    max_num_iterations=state['max_num_iterations'],
                    validate_after_iters=state['validate_after_iters'],
                    log_after_iters=state['log_after_iters'],
@@ -642,7 +642,7 @@ class CascadedUNet3DTrainerBuilder:
         loaders = get_train_loaders(config)
 
         # Create the optimizer
-        optimizer = create_optimizer(config['optimizer'], model)
+        optimizer = create_optimizer(config['optimizer'], model,model0)
 
         # Create learning rate adjustment strategy
         lr_scheduler = create_lr_scheduler(config.get('lr_scheduler', None), optimizer)
@@ -819,7 +819,6 @@ class CascadedUNet3DTrainer:
         # sets the model in training mode
         self.model.train()
         self.model0.train()
-
         for t in self.loaders['train']:
             logger.info(f'Training iteration [{self.num_iterations}/{self.max_num_iterations}]. '
                         f'Epoch [{self.num_epoch}/{self.max_num_epochs - 1}]')
@@ -881,6 +880,8 @@ class CascadedUNet3DTrainer:
 
                 # save checkpoint
                 self._save_checkpoint(is_best)
+                # if self.es.step(eval_score.item()):
+                #     return True
 
             if self.num_iterations % self.log_after_iters == 0:
                 # if model contains final_activation layer for normalizing logits apply it, otherwise both

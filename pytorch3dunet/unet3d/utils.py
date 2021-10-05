@@ -108,10 +108,10 @@ def get_patches(input,target,box,i):
         patch_size = (80,80,80)
 
     binterp = True
-    input_cropped = F.interpolate(input_cropped,size=patch_size,mode='trilinear')
-    target_cropped = target_cropped.float().unsqueeze(1)/15
-    target_cropped = F.interpolate(target_cropped,size=patch_size,mode='nearest').squeeze(1)
-    target_cropped = (target_cropped*15).long()
+    # input_cropped = F.interpolate(input_cropped,size=patch_size,mode='trilinear')
+    # target_cropped = target_cropped.float().unsqueeze(1)/15
+    # target_cropped = F.interpolate(target_cropped,size=patch_size,mode='nearest').squeeze(1)
+    # target_cropped = (target_cropped*15).long()
     # target_cropped[target_cropped != i] =0 
     return input_cropped,target_cropped,binterp
 
@@ -127,8 +127,8 @@ def stitch_patches(outputs,boxes,shape,binterps,ncls=15):
     for i,box in enumerate(boxes):
         fs = outputs[i]
         # if (box[1]-box[0]) < 48:
-        if binterps[i]:
-            fs = F.interpolate(fs,size=(int(box[1]-box[0]),int(box[3]-box[2]),int(box[5]-box[4])),mode='trilinear')
+        # if binterps[i]:
+        #     fs = F.interpolate(fs,size=(int(box[1]-box[0]),int(box[3]-box[2]),int(box[5]-box[4])),mode='trilinear')
         output[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]+=fs
         counter[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]+=1
 
@@ -141,9 +141,15 @@ def stitch_patches(outputs,boxes,shape,binterps,ncls=15):
     return output
 
 def get_roi(output,atlas=None):
-#    output = torch.argmax(output,1)
+    # output = torch.argmax(output,1)
+    # boxes_output = get_cropped_structure(output)
+    # boxes = get_cropped_structure(atlas)
+    # final_boxes = [[min(bo[0],ba[0]),max(bo[1],ba[1]),min(bo[2],ba[2]),max(bo[3],ba[3]),min(bo[4],ba[4]),max(bo[5],ba[5])] for bo,ba in zip(boxes_output,boxes)]
+    # return final_boxes
     boxes = get_cropped_structure(atlas)
     return boxes
+
+
 
 
 def bbox2_3D(img,icls=0):
@@ -159,24 +165,18 @@ def bbox2_3D(img,icls=0):
     return [rmin,rmax,cmin,cmax,zmin,zmax]
 
 def getpwr(n,lbl_shape=(80,80,80)):
-    pos=math.ceil(math.log(n,2))
-    pwr = math.pow(2,pos)
+    if n%8 == 0:
+        return n
+    pwr = 8
+    for i in range(2,int(lbl_shape[0]/8)):
+        npwr = pwr*i
+        if n < pwr:
+            return pwr
+        elif n < npwr:
+            return npwr
+        else:
+            return npwr
 
-    if pwr>lbl_shape[0]:      
-        return lbl_shape[0]
-    if pwr <= 8:
-        pwr =16
-
-    if n<48 and (48-n)<(pwr-n):
-        pwr = 48
-    if n<40 and (40-n)<(pwr-n):
-        pwr = 40
-    if n<24 and (40-n)<(pwr-n):
-        pwr = 24
-    if n<20 and (20-n)<(pwr-n):
-        pwr = 20
-    
-    return pwr
     
 
 def get_cropped_structure(lbl,ncls=15,patch_shape=(48,48,48)):
@@ -185,6 +185,7 @@ def get_cropped_structure(lbl,ncls=15,patch_shape=(48,48,48)):
     lbl_shape = lbl.shape[1:]
     for icls in range(ncls):
         box = bbox2_3D(lbl,icls)
+        #print("c",(box[1]-box[0],box[3]-box[2],box[5]-box[4]))
         if icls == 0:
             box[0],box[1],box[2],box[3],box[4],box[5] = 0,lbl_shape[0],0,lbl_shape[1],0,lbl_shape[2]
         center = [int((box[1] + box[0]) / 2), int((box[3] + box[2]) / 2), int((box[5] + box[4]) / 2)]
@@ -192,7 +193,7 @@ def get_cropped_structure(lbl,ncls=15,patch_shape=(48,48,48)):
         b1=getpwr(box[1]-box[0])
         b2=getpwr(box[3]-box[2])
         b3=getpwr(box[5]-box[4])
-
+        #print(b1,b2,b3)
         if b1 == lbl_shape[0] and b2 == lbl_shape[1] and b3 ==lbl_shape[2]:
             center = [int(lbl_shape[0] / 2), int(lbl_shape[1] / 2), int(lbl_shape[2] / 2)]
 
@@ -222,7 +223,7 @@ def get_cropped_structure(lbl,ncls=15,patch_shape=(48,48,48)):
         if box[5]>lbl_shape[0]:
             box[5]=lbl_shape[0]
             box[4]-=1
-        # print("c",(box[1]-box[0],box[3]-box[2],box[5]-box[4]))
+        #print("c",(box[1]-box[0],box[3]-box[2],box[5]-box[4]))
         
         boxes.append(box)
     # boxes.sort()
@@ -508,11 +509,12 @@ def convert_to_numpy(*inputs):
     return (_to_numpy(i) for i in inputs)
 
 
-def create_optimizer(optimizer_config, model):
+def create_optimizer(optimizer_config, model,model0=None):
     learning_rate = optimizer_config['learning_rate']
     weight_decay = optimizer_config.get('weight_decay', 0)
     betas = tuple(optimizer_config.get('betas', (0.9, 0.999)))
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate, betas=betas, weight_decay=weight_decay)
+    params= model.parameters() if model0 is None else list(model.parameters())+list(model0.parameters())
+    optimizer = optim.Adam(params, lr=learning_rate, betas=betas, weight_decay=weight_decay)
     return optimizer
 
 
@@ -534,3 +536,53 @@ def create_sample_plotter(sample_plotter_config):
     m = importlib.import_module('pytorch3dunet.unet3d.utils')
     clazz = getattr(m, class_name)
     return clazz(**sample_plotter_config)
+
+
+class EarlyStopping(object):
+    def __init__(self, mode='min', min_delta=0, patience=10, percentage=False):
+        self.mode = mode
+        self.min_delta = min_delta
+        self.patience = patience
+        self.best = None
+        self.num_bad_epochs = 0
+        self.is_better = None
+        self._init_is_better(mode, min_delta, percentage)
+
+        if patience == 0:
+            self.is_better = lambda a, b: True
+            self.step = lambda a: False
+
+    def step(self, metrics):
+        if self.best is None:
+            self.best = metrics
+            return False
+
+        if np.isnan(metrics):
+            return True
+
+        if self.is_better(metrics, self.best):
+            self.num_bad_epochs = 0
+            self.best = metrics
+        else:
+            self.num_bad_epochs += 1
+
+        if self.num_bad_epochs >= self.patience:
+            return True
+
+        return False
+
+    def _init_is_better(self, mode, min_delta, percentage):
+        if mode not in {'min', 'max'}:
+            raise ValueError('mode ' + mode + ' is unknown!')
+        if not percentage:
+            if mode == 'min':
+                self.is_better = lambda a, best: a < best - min_delta
+            if mode == 'max':
+                self.is_better = lambda a, best: a > best + min_delta
+        else:
+            if mode == 'min':
+                self.is_better = lambda a, best: a < best - (
+                            best * min_delta / 100)
+            if mode == 'max':
+                self.is_better = lambda a, best: a > best + (
+                            best * min_delta / 100)

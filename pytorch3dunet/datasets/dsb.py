@@ -143,7 +143,7 @@ class DSB2018Dataset(ConfigDataset):
     
 class NiiDataset(ConfigDataset):
     def __init__(self, root_dir, phase, transformer_config, mirror_padding=(0, 32, 32), expand_dims=True,
-                 instance_ratio=None, random_seed=0,patch_shape=(80,80,80),atlas_path=None,suffix_raw='_ana_strip_1mm_center_cropped.nii.gz',suffix_label='_seg_ana_1mm_center_cropped.nii.gz'):
+                 instance_ratio=None, random_seed=0,patch_shape=(80,80,80),atlas_path=None,suffix_raw='_ana_strip_1mm_center_cropped.nii.gz',suffix_label='_seg_ana_1mm_center_cropped.nii.gz',dirpath=''):
         # assert os.path.isdir(root_dir), f'{root_dir} is not a directory'
         assert phase in ['train', 'val', 'test']
 
@@ -159,7 +159,7 @@ class NiiDataset(ConfigDataset):
         # load raw images
         # images_dir = os.path.join(root_dir, 'images')
         # assert os.path.isdir(images_dir)
-        self.paths = self._load_files(root_dir,phase, suffix_raw)
+        self.paths = self._load_files(root_dir,phase, suffix_raw,dirpath)
         self.images = self._load_images(self.paths,expand_dims=expand_dims)
         self.atlas = self._load_nii(atlas_path,True) if atlas_path else None
         self.file_path = root_dir
@@ -181,7 +181,7 @@ class NiiDataset(ConfigDataset):
             # load labeled images
             # masks_dir = os.path.join(root_dir, 'masks')
         # assert os.path.isdir(masks_dir)
-        self.mask_paths = self._load_files(root_dir,phase, suffix_label)
+        self.mask_paths = self._load_files(root_dir,phase, suffix_label,dirpath)
         self.masks = self._load_masks(self.mask_paths)
         # load label images transformer
         self.masks_transform = transformer.label_transform()
@@ -224,11 +224,13 @@ class NiiDataset(ConfigDataset):
 
     @classmethod
     def create_datasets(cls, dataset_config, phase):
+
         phase_config = dataset_config[phase]
         # load data augmentation configuration
         transformer_config = phase_config['transformer']
         # load files to process
         file_paths = phase_config['file_paths']
+        dirpath =phase_config.get('dirpath','')
         atlas_path = phase_config.get('atlas_path',None)
         patch_shape = phase_config['slice_builder']['patch_shape']
         suffix_raw = dataset_config.get('suffix_raw','_ana_strip_1mm_center_cropped.nii.gz')
@@ -239,7 +241,7 @@ class NiiDataset(ConfigDataset):
         expand_dims = dataset_config.get('expand_dims', True)
         instance_ratio = phase_config.get('instance_ratio', None)
         random_seed = phase_config.get('random_seed', 0)
-        return [cls(file_paths[0], phase, transformer_config, mirror_padding, expand_dims, instance_ratio, random_seed,patch_shape,atlas_path,suffix_raw,suffix_label)]
+        return [cls(file_paths[0], phase, transformer_config, mirror_padding, expand_dims, instance_ratio, random_seed,patch_shape,atlas_path,suffix_raw,suffix_label,dirpath)]
 
     @staticmethod
     def _load_nii(path,expand_dims):
@@ -277,10 +279,10 @@ class NiiDataset(ConfigDataset):
         return dct[phase]
 
     @staticmethod
-    def _load_files(path,phase, suffix):
+    def _load_files(path,phase, suffix,rootdir=''):
         with open(path,'r') as f:
             dct = json.load(f)
-        paths = [f+suffix for f in dct[phase]]
+        paths = [rootdir+f+suffix for f in dct[phase]]
         return paths
 
     @staticmethod
