@@ -143,7 +143,7 @@ class DSB2018Dataset(ConfigDataset):
     
 class NiiDataset(ConfigDataset):
     def __init__(self, root_dir, phase, transformer_config, mirror_padding=(0, 32, 32), expand_dims=True,
-                 instance_ratio=None, random_seed=0,patch_shape=(80,80,80),atlas_path=None,suffix_raw='_ana_strip_1mm_center_cropped.nii.gz',suffix_label='_seg_ana_1mm_center_cropped.nii.gz',dirpath=''):
+                 instance_ratio=None, random_seed=0,patch_shape=(80,80,80),atlas_path=None,suffix_raw='_ana_strip_1mm_center_cropped.nii.gz',suffix_label='_seg_ana_1mm_center_cropped.nii.gz',dirpath='',suffix_aux='_seg_tissue_1mm_center_cropped.nii.gz'):
         # assert os.path.isdir(root_dir), f'{root_dir} is not a directory'
         assert phase in ['train', 'val', 'test']
 
@@ -183,6 +183,11 @@ class NiiDataset(ConfigDataset):
         # assert os.path.isdir(masks_dir)
         self.mask_paths = self._load_files(root_dir,phase, suffix_label,dirpath)
         self.masks = self._load_masks(self.mask_paths)
+
+        self.tissues=None
+        if suffix_aux is not None:
+            self.tissue_paths = self._load_files(root_dir,phase, suffix_aux,dirpath)
+            self.tissues = self._load_masks(self.tissue_paths)
         # load label images transformer
         self.masks_transform = transformer.label_transform()
     # else:
@@ -201,11 +206,15 @@ class NiiDataset(ConfigDataset):
             mask = self.masks[idx]
             # icls = np.random.randint(0,15)
             
-            
+            if self.tissues is not None:
+                tissue = self.tissues[idx]
             if self.expand_dims:
                 img = np.expand_dims(img, axis=0)
             if self.atlas is not None:
-                return self.raw_transform(img), self.masks_transform(mask),self.atlas
+                if self.tissues is not None:
+                    return self.raw_transform(img), self.masks_transform(mask),self.atlas,self.masks_transform(tissue)
+                else:
+                    return self.raw_transform(img), self.masks_transform(mask),self.atlas
             else:
                 return self.raw_transform(img), self.masks_transform(mask)
         else:
@@ -235,13 +244,14 @@ class NiiDataset(ConfigDataset):
         patch_shape = phase_config['slice_builder']['patch_shape']
         suffix_raw = dataset_config.get('suffix_raw','_ana_strip_1mm_center_cropped.nii.gz')
         suffix_label = dataset_config.get('suffix_label','_seg_ana_1mm_center_cropped.nii.gz')
+        suffix_aux = dataset_config.get('suffix_aux',None)
 
         # mirror padding conf
         mirror_padding = dataset_config.get('mirror_padding', None)
         expand_dims = dataset_config.get('expand_dims', True)
         instance_ratio = phase_config.get('instance_ratio', None)
         random_seed = phase_config.get('random_seed', 0)
-        return [cls(file_paths[0], phase, transformer_config, mirror_padding, expand_dims, instance_ratio, random_seed,patch_shape,atlas_path,suffix_raw,suffix_label,dirpath)]
+        return [cls(file_paths[0], phase, transformer_config, mirror_padding, expand_dims, instance_ratio, random_seed,patch_shape,atlas_path,suffix_raw,suffix_label,dirpath,suffix_aux)]
 
     @staticmethod
     def _load_nii(path,expand_dims):

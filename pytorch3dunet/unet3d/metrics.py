@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from skimage import measure
 from skimage.metrics import adapted_rand_error, peak_signal_noise_ratio
-
+import SimpleITK as sitk
 from pytorch3dunet.unet3d.losses import compute_per_channel_dice
 from pytorch3dunet.unet3d.seg_metrics import AveragePrecision, Accuracy
 from pytorch3dunet.unet3d.utils import get_logger, expand_as_one_hot, convert_to_numpy
@@ -49,6 +49,35 @@ class DiceCoefficientFull:
         x=compute_per_channel_dice(encoded_input, encoded_target, epsilon=self.epsilon)
         # x=torch.mean(x[1:])
         return x
+
+class HausdorffDistance:
+
+    def __init__(self, num_classes=15,**kwargs):
+        self.num_classes = num_classes
+        self.hausdorff_distance_filter = sitk.HausdorffDistanceImageFilter()
+
+
+    def __call__(self,predictions, labels):
+        dice_scores = np.zeros((self.num_classes))
+        
+        predictions = predictions.squeeze()
+        labels = labels.squeeze()
+
+        p = sitk.GetImageFromArray(predictions.cpu().numpy().astype(np.uint8))
+        l = sitk.GetImageFromArray(labels.cpu().numpy().astype(np.uint8))
+
+        for i in range(self.num_classes):
+            # if np.sum(p ==i) ==0:
+            #     continue
+            lTestImage = sitk.BinaryThreshold(p, i, i, 1, 0)
+            lResultImage = sitk.BinaryThreshold(l, i, i, 1, 0)
+
+            self.hausdorff_distance_filter.Execute(lTestImage, lResultImage)
+
+            hd_value = self.hausdorff_distance_filter.GetHausdorffDistance()
+            dice_scores[i] = hd_value
+
+        return torch.Tensor(dice_scores.astype(np.float32))
 
 class MeanIoU:
     """
@@ -463,3 +492,15 @@ def get_evaluation_metric(config):
     metric_config = config['eval_metric']
     metric_class = _metric_class(metric_config['name'])
     return metric_class(**metric_config)
+
+def get_evaluation_metrics(config):
+    metrics=[]
+    def _metric_class(class_name):
+        m = importlib.import_module('pytorch3dunet.unet3d.metrics')
+        clazz = getattr(m, class_name)
+        return clazz
+    for m in config['eval_metric']:
+        metric_class = _metric_class(m['name'])
+        metrics.append(metric_class(**m))
+    return metrics
+

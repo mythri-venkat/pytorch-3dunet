@@ -10,7 +10,7 @@ from pytorch3dunet.datasets.hdf5 import AbstractHDF5Dataset
 from pytorch3dunet.datasets.utils import SliceBuilder
 from pytorch3dunet.unet3d.utils import get_logger
 from pytorch3dunet.unet3d.utils import remove_halo
-from pytorch3dunet.unet3d.metrics import get_evaluation_metric
+from pytorch3dunet.unet3d.metrics import get_evaluation_metric,get_evaluation_metrics
 import pandas as pa
 import torch.nn.functional as F
 from . import utils
@@ -237,7 +237,7 @@ class NiiPredictor(_AbstractPredictor):
     def __init__(self, model, output_dir, config, **kwargs):
         super().__init__(model, output_dir, config, **kwargs)
         self.device = self.config['device']
-        self.eval_criterion = get_evaluation_metric(self.config)
+        self.eval_criterion = get_evaluation_metrics(self.config)
         self.roi_patches=kwargs['roi_patches'] if 'roi_patches' in kwargs else False
 
 
@@ -282,9 +282,10 @@ class NiiPredictor(_AbstractPredictor):
                 if self.roi_patches:
                     boxes= utils.get_roi(None,atlas)
                     for i in range(len(boxes)):
-                        input_cropped,target_cropped,binterp = utils.get_patches(batch,target,boxes[i],i)
+                        input_cropped,target_cropped,binterp = utils.get_patches(batch,target,boxes[i])
                         binterps.append(binterp)
-                        prediction = self.model(input_cropped)
+                        prediction,_ = self.model(input_cropped)
+                        
                         predictions.append(prediction)
                         # bnoutputs.append(prediction[:,i,...] > 0.5)
                         # eval_score.append(self.eval_criterion(bnoutputs[i], target_cropped))
@@ -293,12 +294,24 @@ class NiiPredictor(_AbstractPredictor):
                     prediction = utils.stitch_patches(predictions,boxes,batch.shape,binterps)
                 else:
                     prediction = self.model(batch)
-                    prediction = torch.argmax(prediction)
+                    prediction = torch.argmax(prediction,1)
                 
-                eval_score = self.eval_criterion(prediction,target)
-                eval_scores.append(eval_score.cpu().numpy())
+                if isinstance(self.eval_criterion,list):
+                    evals = []
+                    for eval_crit in self.eval_criterion:
+                        eval_score = eval_crit(prediction,target)
+                        evals.append(eval_score.cpu().numpy())
+                    eval_scores.append(evals)
+
+                    print('Results: ')
+                    print([type(self.eval_criterion[i]).__name__ + ':' + str(np.mean(evals[i][1:])) for i in range(len(self.eval_criterion))])
+                    
+                else:
+                    eval_score = self.eval_criterion(prediction,target)
+                    eval_scores.append(eval_score.cpu().numpy())
+                    print(np.mean(eval_score.cpu().numpy()[1:]))
                 output_file=self._save_results(prediction,subject)
-                print(np.mean(eval_score.cpu().numpy()[1:]))
+                
                 
                 # save results
                 logger.info(f'Saving predictions to: {output_file}')
@@ -325,23 +338,34 @@ class NiiPredictor(_AbstractPredictor):
         return input, target, subjects,atlas
 
     def _evaluate_save_results(self,eval_scores):
-        
+        # if isinstance(eval_scores[0],list)
+            
         eval_scores = np.array(eval_scores)
         
+        evals = len(eval_scores.shape)
+        if evals == 2:
+            eval_scores = np.expand_dims(eval_scores,1)
         if os.path.isdir(os.path.dirname(self.config['model_path'])):
             outfile = os.path.dirname(self.config['model_path']) +'/summary.csv'
         else:
             outfile = 'summary.csv'
         dct={}        
-        avg =  np.mean(eval_scores,0).tolist()
-        avg.extend([np.mean(eval_scores[:,3:]),np.mean(eval_scores[:,1:])])
-        std = np.std(eval_scores,0).tolist()
-        std.extend([np.std(eval_scores[:,3:]),np.std(eval_scores[:,1:])])
+        avg =  np.mean(eval_scores,0)[0].tolist()
+        avg.extend([np.mean(eval_scores[:,0,3:]),np.mean(eval_scores[:,0,1:])])
+        std = np.std(eval_scores,0)[0].tolist()
+        std.extend([np.std(eval_scores[:,0,3:]),np.std(eval_scores[:,0,1:])])
         dct['dice_mean'] = avg
         dct['dice_std'] = std
+        if evals == 3:
+            avg =  np.mean(eval_scores,0)[1].tolist()
+            avg.extend([np.mean(eval_scores[:,1,3:]),np.mean(eval_scores[:,1,1:])])
+            std = np.std(eval_scores,0)[1].tolist()
+            std.extend([np.std(eval_scores[:,1,3:]),np.std(eval_scores[:,1,1:])])
+            dct['hd_mean'] = avg
+            dct['hd_std'] = std
         df = pa.DataFrame(dct)
         df.to_csv(outfile)
-        return avg[-2],avg[-1]
+        return dct['dice_mean'][-2],dct['dice_mean'][-1]
 
 
     def _save_results(self,prediction,subject):

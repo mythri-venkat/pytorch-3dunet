@@ -98,10 +98,12 @@ def load_pretrained_checkpoint(checkpoint_path, model, optimizer=None,
 
     return state
 
-def get_patches(input,target,box,i):
+def get_patches(input,target,box,tissue=None):
 
     input_cropped = input[:,:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
     target_cropped = target[:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
+    if tissue is not None:
+        tissue_cropped = tissue[:,int(box[0]):int(box[1]),int(box[2]):int(box[3]),int(box[4]):int(box[5])]
     binterp = False
     patch_size=(48,48,48)
     if (box[1]-box[0]) > 48:
@@ -113,7 +115,10 @@ def get_patches(input,target,box,i):
     # target_cropped = F.interpolate(target_cropped,size=patch_size,mode='nearest').squeeze(1)
     # target_cropped = (target_cropped*15).long()
     # target_cropped[target_cropped != i] =0 
-    return input_cropped,target_cropped,binterp
+    if tissue is not None:
+        return input_cropped,target_cropped,tissue_cropped
+    else:
+        return input_cropped,target_cropped,binterp
 
 
 def stitch_patches(outputs,boxes,shape,binterps,ncls=15):

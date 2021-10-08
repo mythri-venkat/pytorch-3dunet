@@ -593,3 +593,40 @@ class NoUpsampling(AbstractUpsampling):
     @staticmethod
     def _no_upsampling(x, size):
         return x
+
+class Regressor(nn.Module):
+    def __init__(self,in_channels,mid_channels,out_channels):
+        super(Regressor,self).__init__()
+        
+        self.fc1 = nn.Linear(in_channels,mid_channels)
+        self.fc2 = nn.Linear(mid_channels,out_channels)
+    def forward(self,x):
+        x = F.avg_pool3d(x,x.shape[-1]).flatten()
+        x = self.fc1(x)
+        x = self.fc2(x)
+        return x
+
+class Classifier(nn.Module):
+    def __init__(self,in_channels,mid_channels,out_channels):
+        super(Classifier,self).__init__()
+        
+        self.fc1 = nn.Linear(in_channels,mid_channels)
+        self.fc2 = nn.Linear(mid_channels,out_channels)
+    def forward(self,x):
+        x = F.avg_pool3d(x,x.shape[-1]).flatten()
+        x = self.fc1(x)
+        x = self.fc2(x)
+        return x
+
+class Task(nn.Module):
+    def __init__(self,in_channels,out_channels):
+        super(Task,self).__init__()
+        
+        self.conv1 = SingleConv(in_channels,in_channels)
+        self.conv2 = nn.Conv3d(in_channels,out_channels,1)
+        
+    def forward(self,x):
+        
+        x = self.conv1(x)
+        x = self.conv2(x)
+        return x

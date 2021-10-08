@@ -306,6 +306,42 @@ class CEDiceLoss(nn.Module):
         ldsc1 = self.dsc1(pred,target)
         return l1+ldsc1
 
+class MTLLoss(nn.Module):
+    def __init__(self,lamb,weight,ignore_index,normalization):
+        super(MTLLoss, self).__init__()
+        self.main = CEDiceLoss(weight,ignore_index,normalization)
+        self.aux = nn.CrossEntropyLoss(weight=None, ignore_index=ignore_index)
+        self.lamb=lamb
+
+    def __call__(self, pred,target,pred_aux,target_aux,baux):
+        lmain = self.main(pred,target)
+        
+        if baux:
+            laux = self.aux(pred_aux,target_aux)
+            loss = self.lamb*lmain+(1-self.lamb)*laux
+            return loss,lmain,laux
+        else:
+            lmain,lmain,0
+
+
+class MTLCELoss(nn.Module):
+    def __init__(self,lamb,weight,ignore_index,normalization):
+        super(MTLLoss, self).__init__()
+        self.lamb
+        self.main = nn.CrossEntropyLoss(weight=None,ignore_index=ignore_index)
+        self.aux = nn.CrossEntropyLoss(weight=None, ignore_index=ignore_index)
+
+    def __call__(self, pred,target,pred_aux,target_aux,baux):
+        lmain = self.main(pred,target)
+        
+        if baux:
+            laux = self.aux(pred_aux,target_aux)
+            loss = self.lamb*lmain+(1-self.lamb)*laux
+
+            return loss,lmain,laux
+        else:
+            lmain,lmain,0
+
 def flatten(tensor):
     """Flattens a given tensor such that the channel axis is first.
     The shapes are transformed as follows:
@@ -405,5 +441,17 @@ def _create_loss(name, loss_config, weight, ignore_index, pos_weight):
         if ignore_index is None:
             ignore_index = -100  # use the default 'ignore_index' as defined in the CrossEntropyLoss
         return CEDiceLoss(weight=weight,ignore_index=ignore_index,normalization=normalization)
+    elif name == "MTLLoss":
+        normalization = loss_config.get('normalization', 'softmax')
+        lamb = loss_config.get('lamb', 0.6)
+        if ignore_index is None:
+            ignore_index = -100  # use the default 'ignore_index' as defined in the CrossEntropyLoss
+        return MTLLoss(lamb=lamb,weight=weight,ignore_index=ignore_index,normalization=normalization)
+    elif name == "MTLCELoss":
+        normalization = loss_config.get('normalization', 'softmax')
+        lamb = loss_config.get('lamb', 0.6)
+        if ignore_index is None:
+            ignore_index = -100  # use the default 'ignore_index' as defined in the CrossEntropyLoss
+        return MTLCELoss(lamb=lamb,weight=weight,ignore_index=ignore_index,normalization=normalization)
     else:
         raise RuntimeError(f"Unsupported loss function: '{name}'")
