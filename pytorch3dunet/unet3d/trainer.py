@@ -792,8 +792,8 @@ class MTLUNet3DTrainer:
                    roi_patches=kwargs['roi_patches'])
 
     def fit(self):
-        self.es = EarlyStopping(mode='min',patience=25)
-        self.es_aux = EarlyStopping(mode='min',patience=25)
+        self.es = EarlyStopping(mode='min',patience=15)
+        self.es_aux = EarlyStopping(mode='min',patience=15)
         self.baux = False
         self.bmain = False
         for _ in range(self.num_epoch, self.max_num_epochs):

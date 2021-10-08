@@ -326,8 +326,8 @@ class MTLLoss(nn.Module):
 
 class MTLCELoss(nn.Module):
     def __init__(self,lamb,weight,ignore_index,normalization):
-        super(MTLLoss, self).__init__()
-        self.lamb
+        super(MTLCELoss, self).__init__()
+        self.lamb=lamb
         self.main = nn.CrossEntropyLoss(weight=None,ignore_index=ignore_index)
         self.aux = nn.CrossEntropyLoss(weight=None, ignore_index=ignore_index)
 
